@@ -1,0 +1,40 @@
+import { GlassPanel } from "@/components/ui/GlassPanel";
+import { Chip } from "@/components/ui/Chip";
+import type { WhaleRow } from "@/lib/scan/types";
+import { shortAddress, formatCompactNumber } from "@/lib/utils";
+import { shortNumber } from "@/lib/scan/adapter";
+import { ROLE_DOT_CLASS } from "@/lib/scan/format";
+import { cn } from "@/lib/utils";
+
+export function WhaleTable({ whales }: { whales: WhaleRow[] }) {
+  return (
+    <GlassPanel className="overflow-hidden p-4">
+      <div className="mb-3 text-sm font-medium text-ink">Whale intelligence</div>
+      {whales.length === 0 ? (
+        <p className="text-xs text-ink-faint">No whale-sized holders observed in this window.</p>
+      ) : (
+        <div className="flex flex-col divide-y divide-line">
+          {whales.map((w) => (
+            <div key={w.address} className="flex flex-wrap items-center gap-2 py-2.5 first:pt-0 last:pb-0">
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", ROLE_DOT_CLASS[w.role])} />
+              <span className="font-mono text-xs text-ink">{shortAddress(w.address)}</span>
+              <div className="flex flex-wrap gap-1">
+                {w.labels.map((l) => (
+                  <Chip key={l} className="px-2 py-0.5 text-[10px]">
+                    {l}
+                  </Chip>
+                ))}
+              </div>
+              <div className="ml-auto flex items-center gap-3 text-xs text-ink-faint">
+                <span className="text-ink-muted">{w.pctSupply.toFixed(2)}%</span>
+                <span>{shortNumber(w.nativeBalance ?? 0)} ETH</span>
+                <span>{formatCompactNumber(w.connectedWallets)} links</span>
+                <span>{formatCompactNumber(w.recentTxs)} txs</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </GlassPanel>
+  );
+}

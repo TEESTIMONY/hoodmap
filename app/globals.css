@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+/*
+  HoodMap design system — dark-first, lime-on-black fintech palette (lime ->
+  moss duotone). Surfaces are mostly-solid dark cards with a subtle sheen,
+  over a near-black canvas with soft drifting glow behind hero content.
+*/
+
+:root {
+  --color-canvas: #06070a;
+  --color-surface: #0d0f14;
+  --color-surface-2: #13161d;
+  --color-surface-3: #191d26;
+
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-line-strong: rgba(255, 255, 255, 0.16);
+
+  --color-ink: #f4f5f7;
+  --color-ink-muted: #9aa1ae;
+  --color-ink-faint: #676e7a;
+
+  --color-lime: #D6FA4D;
+  --color-lime-soft: #E6FF9E;
+  --color-moss: #17B04A;
+  --color-moss-soft: #7CE38A;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #fb7185;
+
+  --shadow-glow-lime: 0 0 0 1px rgba(214, 250, 77, 0.25), 0 8px 40px -8px rgba(214, 250, 77, 0.35);
+  --shadow-glow-moss: 0 0 0 1px rgba(23, 176, 74, 0.25), 0 8px 40px -8px rgba(23, 176, 74, 0.35);
+}
+
+@theme inline {
+  --color-canvas: var(--color-canvas);
+  --color-surface: var(--color-surface);
+  --color-surface-2: var(--color-surface-2);
+  --color-surface-3: var(--color-surface-3);
+  --color-line: var(--color-line);
+  --color-line-strong: var(--color-line-strong);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-faint: var(--color-ink-faint);
+  --color-lime: var(--color-lime);
+  --color-lime-soft: var(--color-lime-soft);
+  --color-moss: var(--color-moss);
+  --color-moss-soft: var(--color-moss-soft);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-danger: var(--color-danger);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --radius-md: 0.875rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
+  --radius-2xl: 2.25rem;
+
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-float-delay: float 7s ease-in-out infinite 2.3s;
+  --animate-drift: drift 26s ease-in-out infinite;
+  --animate-spin-slow: spin-angle 3.2s linear infinite;
+  --animate-pulse-soft: pulse-soft 2.6s ease-in-out infinite;
+  --animate-fade-up: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes spin-angle {
+  to {
+    --angle: 360deg;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -6px, 0);
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(2%, -3%, 0) scale(1.05);
+  }
+  66% {
+    transform: translate3d(-2%, 2%, 0) scale(0.98);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(214, 250, 77, 0.35);
+  color: #fff;
+}
+
+/* Rotating aurora ring used for high-reputation avatars ("legendary" tier). */
+.aura-ring {
+  background: conic-gradient(
+    from var(--angle),
+    var(--color-lime),
+    var(--color-moss),
+    var(--color-lime-soft),
+    var(--color-lime)
+  );
+  animation: spin-angle 3.2s linear infinite;
+}
+
+.glass-panel {
+  background-color: var(--color-surface);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01));
+  border: 1px solid var(--color-line);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.aurora-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.35;
+}
+
+/* Thin, high-contrast scrollbars that fit the dark glass surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
