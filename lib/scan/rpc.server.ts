@@ -145,6 +145,37 @@ export async function readTokenDecimalsAndSymbolStrict(
   return { symbol: String(symbol), decimals: Number(decimals) };
 }
 
+// Same reasoning as readTokenDecimalsAndSymbolStrict above, but for callers
+// that also need `name` — specifically token discovery's memecoin filter,
+// which keys heavily off name text (e.g. the "• Robinhood Token" suffix,
+// "dollar"). readTokenMetadata's lenient per-field fallback means a metadata
+// hiccup silently becomes generic "Unknown Token"/"TOKEN" placeholder text
+// that still passes through as if it were real data — which can't match
+// any exclusion pattern, so a stablecoin or tokenized stock whose metadata
+// call happened to fail would slip straight through the memecoin filter
+// instead of being excluded. Confirmed happening on live traffic: a run
+// where most rows resolved to "Unknown Token"/"TOKEN" also let USDG and
+// NVDA (an official tokenized-stock token) through. Throwing here instead
+// lets the caller exclude the candidate rather than trust fabricated text.
+export async function readTokenMetadataStrict(address: string): Promise<TokenMetaOnChain> {
+  const token = getAddress(address);
+  const [name, symbol, decimals, totalSupplyRaw] = await Promise.all([
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "name" }),
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "totalSupply" }),
+  ]);
+  const dec = Number(decimals);
+  return {
+    address: token,
+    name: String(name),
+    symbol: String(symbol),
+    decimals: dec,
+    totalSupplyRaw,
+    totalSupply: Number(formatUnits(totalSupplyRaw, dec)),
+  };
+}
+
 export async function getLatestBlockNumber(): Promise<bigint> {
   return publicClient.getBlockNumber();
 }

@@ -10,7 +10,7 @@ import {
   getLatestBlockNumber,
   isNftContract,
   publicClient,
-  readTokenMetadata,
+  readTokenMetadataStrict,
   WETH_ADDRESS,
 } from "./rpc.server";
 
@@ -152,7 +152,14 @@ export async function discoverTrendingTokens(limit = 20): Promise<TrendingToken[
     // the NFT check doesn't depend on metadata, so there's no reason to
     // wait on one before starting the other.
     const [metas, nftFlags] = await Promise.all([
-      Promise.all(slice.map((r) => readTokenMetadata(getAddress(r.addr)).catch(() => null))),
+      Promise.all(
+        slice.map((r) => {
+          const addr = getAddress(r.addr);
+          return readTokenMetadataStrict(addr)
+            .catch(() => readTokenMetadataStrict(addr))
+            .catch(() => null);
+        }),
+      ),
       Promise.all(slice.map((r) => isNftContract(r.addr).catch(() => false))),
     ]);
     slice.forEach((r, idx) => {
