@@ -121,9 +121,22 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   const deployer = guessDeployer(transfers);
   if (deployer && !candidates.includes(deployer)) candidates.push(deployer);
 
-  const balances = candidates.length
+  const { balances, failed: balanceFetchFailed } = candidates.length
     ? await batchBalanceOf(address, candidates)
-    : new Map<string, bigint>();
+    : { balances: new Map<string, bigint>(), failed: [] as string[] };
+  // A candidate whose balance couldn't be resolved even after retry must NOT
+  // fall back to "0 tokens" — under real RPC load that's indistinguishable
+  // from a genuine empty wallet and was confirmed live to fabricate fake
+  // "0.00%" whale rows for wallets that actually hold a meaningful stake
+  // (see the batchBalanceOf comment). Excluded from holder rows entirely,
+  // same as a strict metadata-read failure elsewhere in this codebase.
+  const balanceFetchFailedSet = new Set(balanceFetchFailed);
+  if (balanceFetchFailedSet.size > 0) {
+    warnings.push({
+      severity: "info",
+      message: `${balanceFetchFailedSet.size} wallet balance(s) couldn't be read from Robinhood Chain even after a retry (RPC instability under this much request volume) and were left out of the holder/whale data rather than shown as an inaccurate 0.`,
+    });
+  }
 
   // ── 4. Detect LP / router-like addresses: contracts with high bidirectional flow
   const inflow = new Map<string, bigint>();
@@ -158,17 +171,19 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
     role: WalletRole;
   }
   const totalSupplyRaw = meta.totalSupplyRaw > 0n ? meta.totalSupplyRaw : 1n;
-  const rows: Row[] = candidates.map((addr) => {
-    const balanceRaw = balances.get(addr) ?? 0n;
-    const balance = Number(formatUnits(balanceRaw, meta.decimals));
-    const pct = meta.totalSupply > 0 ? (balance / meta.totalSupply) * 100 : 0;
-    let role: WalletRole = "holder";
-    if (isBurnAddress(addr)) role = "burn";
-    else if (liquidityLike.has(addr)) role = "liquidity";
-    else if (addr === deployer) role = "developer";
-    else if (pct >= 1) role = "whale";
-    return { addr, balanceRaw, balance, pct, activity: activity.get(addr) ?? 0, role };
-  });
+  const rows: Row[] = candidates
+    .filter((addr) => !balanceFetchFailedSet.has(addr))
+    .map((addr) => {
+      const balanceRaw = balances.get(addr) ?? 0n;
+      const balance = Number(formatUnits(balanceRaw, meta.decimals));
+      const pct = meta.totalSupply > 0 ? (balance / meta.totalSupply) * 100 : 0;
+      let role: WalletRole = "holder";
+      if (isBurnAddress(addr)) role = "burn";
+      else if (liquidityLike.has(addr)) role = "liquidity";
+      else if (addr === deployer) role = "developer";
+      else if (pct >= 1) role = "whale";
+      return { addr, balanceRaw, balance, pct, activity: activity.get(addr) ?? 0, role };
+    });
   rows.sort((a, b) => Number(b.balanceRaw - a.balanceRaw));
 
   const developerRow =
@@ -258,14 +273,19 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
 
   // ── 9. Whale intelligence — top 12 non-liquidity holders + native balances
   const whaleRows = rows.filter((r) => r.role !== "liquidity" && r.role !== "burn").slice(0, 12);
-  const nativeBalances = whaleRows.length
+  const { balances: nativeBalances, failed: nativeBalanceFailed } = whaleRows.length
     ? await batchNativeBalance(whaleRows.map((r) => r.addr))
-    : new Map<string, bigint>();
+    : { balances: new Map<string, bigint>(), failed: [] as string[] };
+  const nativeBalanceFailedSet = new Set(nativeBalanceFailed);
   const whales: WhaleRow[] = whaleRows.map((r) => ({
     address: r.addr,
     balance: r.balance,
     pctSupply: r.pct,
-    nativeBalance: Number(formatUnits(nativeBalances.get(r.addr) ?? 0n, 18)),
+    // undefined (not 0) when the fetch failed even after retry — the UI
+    // shows this as "unavailable" rather than a fabricated "0.0000 ETH".
+    nativeBalance: nativeBalanceFailedSet.has(r.addr)
+      ? undefined
+      : Number(formatUnits(nativeBalances.get(r.addr) ?? 0n, 18)),
     connectedWallets: countConnections(r.addr, edgeCount),
     recentTxs: r.activity,
     labels: labelsFor(r, deployer),

@@ -363,44 +363,94 @@ export async function fetchWalletTransferLogs(
   return { transfers: out, truncated, failedFetches, totalFetches };
 }
 
+// Confirmed live (FRONG token, see the "0.00%" investigation): under the
+// combined RPC load a full analyzeTokenLive run generates, some balanceOf
+// calls in a batch fail even with the transport's own retryCount:1 — and
+// the old `.catch(() => 0n)` silently turned that failure into "this wallet
+// holds 0 tokens," which is indistinguishable from a real 0 balance and
+// corrupts pctSupply/whale rankings for a wallet that may actually be a top
+// holder. A standalone call to the same address for the same block
+// succeeded immediately after, confirming this is transient throttling, not
+// a real zero. Returning `failed` lets the caller exclude those addresses
+// from holder rows entirely (same "exclude rather than fabricate" pattern
+// used for strict token metadata reads) instead of quietly lying about them.
 export async function batchBalanceOf(
   token: string,
   holders: string[],
-): Promise<Map<string, bigint>> {
+): Promise<{ balances: Map<string, bigint>; failed: string[] }> {
   const address = getAddress(token);
   const results = new Map<string, bigint>();
   // Parallel readContract calls; viem batches JSON-RPC via http({batch:true}).
   const CONCURRENCY = 30;
-  for (let i = 0; i < holders.length; i += CONCURRENCY) {
-    const slice = holders.slice(i, i + CONCURRENCY);
-    const balances = await Promise.all(
-      slice.map((h) =>
-        publicClient
-          .readContract({
-            address,
-            abi: ERC20_ABI,
-            functionName: "balanceOf",
-            args: [getAddress(h)],
-          })
-          .catch(() => 0n),
-      ),
-    );
-    slice.forEach((h, idx) => results.set(h.toLowerCase(), balances[idx] as bigint));
+
+  async function fetchPass(list: string[]): Promise<string[]> {
+    const stillFailed: string[] = [];
+    for (let i = 0; i < list.length; i += CONCURRENCY) {
+      const slice = list.slice(i, i + CONCURRENCY);
+      const balances = await Promise.all(
+        slice.map((h) =>
+          publicClient
+            .readContract({
+              address,
+              abi: ERC20_ABI,
+              functionName: "balanceOf",
+              args: [getAddress(h)],
+            })
+            .then((v) => v as bigint)
+            .catch(() => null),
+        ),
+      );
+      slice.forEach((h, idx) => {
+        const b = balances[idx];
+        if (b == null) stillFailed.push(h);
+        else results.set(h.toLowerCase(), b);
+      });
+    }
+    return stillFailed;
   }
-  return results;
+
+  const firstPassFailed = await fetchPass(holders);
+  // Retry as a second full pass (not an immediate same-tick re-call) — the
+  // wall-clock time a full pass over up to 100 addresses takes gives real
+  // separation from whatever throttling window caused the first failure.
+  const stillFailed = firstPassFailed.length ? await fetchPass(firstPassFailed) : [];
+  return { balances: results, failed: stillFailed.map((h) => h.toLowerCase()) };
 }
 
-export async function batchNativeBalance(addresses: string[]): Promise<Map<string, bigint>> {
+// Same failure mode and same fix as batchBalanceOf above: a getBalance call
+// that fails under load used to silently become "0 ETH" instead of an
+// honest "couldn't fetch." Callers should treat an address missing from the
+// returned map as unresolved, not as a confirmed zero balance.
+export async function batchNativeBalance(
+  addresses: string[],
+): Promise<{ balances: Map<string, bigint>; failed: string[] }> {
   const out = new Map<string, bigint>();
   const CONCURRENCY = 30;
-  for (let i = 0; i < addresses.length; i += CONCURRENCY) {
-    const slice = addresses.slice(i, i + CONCURRENCY);
-    const balances = await Promise.all(
-      slice.map((a) => publicClient.getBalance({ address: getAddress(a) }).catch(() => 0n)),
-    );
-    slice.forEach((a, idx) => out.set(a.toLowerCase(), balances[idx] as bigint));
+
+  async function fetchPass(list: string[]): Promise<string[]> {
+    const stillFailed: string[] = [];
+    for (let i = 0; i < list.length; i += CONCURRENCY) {
+      const slice = list.slice(i, i + CONCURRENCY);
+      const balances = await Promise.all(
+        slice.map((a) =>
+          publicClient
+            .getBalance({ address: getAddress(a) })
+            .then((v) => v as bigint)
+            .catch(() => null),
+        ),
+      );
+      slice.forEach((a, idx) => {
+        const b = balances[idx];
+        if (b == null) stillFailed.push(a);
+        else out.set(a.toLowerCase(), b);
+      });
+    }
+    return stillFailed;
   }
-  return out;
+
+  const firstPassFailed = await fetchPass(addresses);
+  const stillFailed = firstPassFailed.length ? await fetchPass(firstPassFailed) : [];
+  return { balances: out, failed: stillFailed.map((a) => a.toLowerCase()) };
 }
 
 export async function batchBlockTimestamps(blockNumbers: bigint[]): Promise<Map<string, number>> {

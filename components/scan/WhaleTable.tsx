@@ -6,6 +6,15 @@ import { shortNumber } from "@/lib/scan/adapter";
 import { ROLE_DOT_CLASS } from "@/lib/scan/format";
 import { cn } from "@/lib/utils";
 
+// A high-supply token can give a real, nonzero % that rounds all the way to
+// "0.00%" at 2 decimal places — indistinguishable at a glance from a
+// literal 0, which reads as broken. "<0.01%" makes clear it's real but
+// small, rather than nothing.
+function formatPct(pct: number): string {
+  if (pct > 0 && pct < 0.01) return "<0.01%";
+  return `${pct.toFixed(2)}%`;
+}
+
 export function WhaleTable({ whales }: { whales: WhaleRow[] }) {
   return (
     <GlassPanel className="overflow-hidden p-4">
@@ -32,8 +41,8 @@ export function WhaleTable({ whales }: { whales: WhaleRow[] }) {
                 ))}
               </div>
               <div className="ml-auto flex items-center gap-3 text-xs text-ink-faint">
-                <span className="text-ink-muted">{w.pctSupply.toFixed(2)}%</span>
-                <span>{shortNumber(w.nativeBalance ?? 0)} ETH</span>
+                <span className="text-ink-muted">{formatPct(w.pctSupply)}</span>
+                <span>{w.nativeBalance == null ? "— ETH (unavailable)" : `${shortNumber(w.nativeBalance)} ETH`}</span>
                 <span>{formatCompactNumber(w.connectedWallets)} links</span>
                 <span>{formatCompactNumber(w.recentTxs)} txs</span>
               </div>
