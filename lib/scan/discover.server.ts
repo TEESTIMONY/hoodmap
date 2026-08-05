@@ -6,7 +6,13 @@
 // directly from logs instead of a database. Server-only.
 
 import { formatUnits, getAddress, parseAbiItem, type Address, type Log } from "viem";
-import { getLatestBlockNumber, publicClient, readTokenMetadata, WETH_ADDRESS } from "./rpc.server";
+import {
+  getLatestBlockNumber,
+  isNftContract,
+  publicClient,
+  readTokenMetadata,
+  WETH_ADDRESS,
+} from "./rpc.server";
 
 const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -27,6 +33,47 @@ const LOG_FETCH_CONCURRENCY = 4;
 // stablecoins) but aren't "trending" in any meaningful sense — they're the
 // quote side of nearly every swap. Excluded from the ranking.
 const EXCLUDED_TOKENS = new Set<string>([WETH_ADDRESS]);
+
+// "Top tokens" is meant to surface memecoins specifically. Sampling real
+// trending tokens on this chain showed it's overwhelmingly memecoins
+// (DERP, WOOF/Shibinhood, CASHCAT, monkey coin, NASDANQ, ...) plus a few
+// confirmed non-meme categories, each with a reliable pattern:
+//   - Tokenized real-world stocks: name always carries this exact suffix,
+//     e.g. "NVIDIA • Robinhood Token", "GameStop • Robinhood Token".
+//   - Stablecoins: e.g. "Global Dollar" (USDG), USDC/USDT/DAI-style names.
+//   - Uniswap's own LP-position NFT tokens, e.g. "UNI-V4-POSM" / "Uniswap
+//     v4 Positions NFT" — not a tradeable token at all.
+//   - NFT collections: a log-based scan can't tell an ERC-721/1155
+//     collection apart from a real token by its Transfer logs alone (same
+//     event signature) — confirmed in practice when "H00dle NFT" showed up
+//     in raw discovery results. Name-keyword catches the self-describing
+//     cases cheaply; isNftContract() (ERC-165) below catches the rest.
+// Everything else is treated as a memecoin rather than trying to build a
+// positive allowlist, since that's what the actual data looks like here.
+function isNonMemeByNameOrSymbol(name: string, symbol: string): boolean {
+  const n = name.toLowerCase();
+  const s = symbol.toLowerCase();
+  if (n.includes("robinhood token")) return true;
+  if (
+    n.includes("dollar") ||
+    n.includes("stablecoin") ||
+    n.includes("stable coin") ||
+    s.includes("usd") ||
+    s === "dai" ||
+    s === "tether"
+  ) {
+    return true;
+  }
+  if (s.startsWith("uni-") || (n.includes("uniswap") && n.includes("position"))) return true;
+  if (n.includes("nft") || s.includes("nft")) return true;
+  return false;
+}
+
+// Resolving metadata for exactly `limit` candidates would under-fill the
+// list once non-meme tokens get filtered out afterward — this fetches a
+// bigger candidate pool up front so the final memecoin-only list still
+// comes close to the requested size.
+const CANDIDATE_BUFFER_RATIO = 0.6;
 
 export interface TrendingToken {
   address: string;
@@ -88,6 +135,7 @@ export async function discoverTrendingTokens(limit = 20): Promise<TrendingToken[
     }
   }
 
+  const candidateLimit = Math.ceil(limit * (1 + CANDIDATE_BUFFER_RATIO));
   const ranked = Array.from(traders.entries())
     .map(([addr, set]) => ({
       addr,
@@ -95,19 +143,23 @@ export async function discoverTrendingTokens(limit = 20): Promise<TrendingToken[
       transferCount: transferCount.get(addr) ?? 0,
     }))
     .sort((a, b) => b.uniqueTraders - a.uniqueTraders || b.transferCount - a.transferCount)
-    .slice(0, limit);
+    .slice(0, candidateLimit);
 
   const out: TrendingToken[] = [];
-  for (let i = 0; i < ranked.length; i += METADATA_CONCURRENCY) {
+  for (let i = 0; i < ranked.length && out.length < limit; i += METADATA_CONCURRENCY) {
     const slice = ranked.slice(i, i + METADATA_CONCURRENCY);
-    const metas = await Promise.all(
-      slice.map((r) =>
-        readTokenMetadata(getAddress(r.addr)).catch(() => null),
-      ),
-    );
+    // Metadata and the ERC-165 NFT check run in parallel per candidate —
+    // the NFT check doesn't depend on metadata, so there's no reason to
+    // wait on one before starting the other.
+    const [metas, nftFlags] = await Promise.all([
+      Promise.all(slice.map((r) => readTokenMetadata(getAddress(r.addr)).catch(() => null))),
+      Promise.all(slice.map((r) => isNftContract(r.addr).catch(() => false))),
+    ]);
     slice.forEach((r, idx) => {
       const meta = metas[idx];
       if (!meta) return;
+      if (nftFlags[idx]) return;
+      if (isNonMemeByNameOrSymbol(meta.name, meta.symbol)) return;
       out.push({
         address: meta.address,
         name: meta.name,
@@ -120,5 +172,5 @@ export async function discoverTrendingTokens(limit = 20): Promise<TrendingToken[
     });
   }
 
-  return out;
+  return out.slice(0, limit);
 }

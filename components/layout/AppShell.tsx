@@ -10,7 +10,7 @@ import { AuroraBackdrop } from "@/components/layout/AuroraBackdrop";
 
 const NAV_ITEMS = [
   { href: "/scan", label: "Scan", icon: ScanLine },
-  { href: "/tokens", label: "Top Tokens", icon: TrendingUp },
+  { href: "/tokens", label: "Top Memecoins", icon: TrendingUp },
   { href: "/wallet", label: "Wallet Passport", icon: Wallet },
   { href: "/constellation", label: "Constellation", icon: Sparkles },
   { href: "/notifications", label: "Notifications", icon: Bell, soon: true },
@@ -81,13 +81,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 flex-col justify-between border-r border-line px-4 py-6 md:flex">
           <div>
             <Link href="/scan" className="mb-8 flex items-center gap-2 px-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-lime to-moss shadow-[var(--shadow-glow-lime)]">
-                <Sparkles className="h-4 w-4 text-canvas" />
-              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/hoodmap-logo.png"
+                alt="HoodMap"
+                className="h-8 w-8 rounded-lg shadow-[var(--shadow-glow-lime)]"
+              />
               <div className="leading-tight">
                 <div className="text-lg font-semibold tracking-tight text-ink">HoodMap</div>
                 <div className="text-[9px] font-medium uppercase tracking-wider text-ink-faint">
-                  Robinhood Chain · Wallet Intelligence
+                  Intelligence layer of robinhood chain
                 </div>
               </div>
             </Link>
@@ -117,13 +120,16 @@ export function AppShell({ children }: { children: ReactNode }) {
                     onClick={() => setMobileNavOpen(false)}
                     className="flex items-center gap-2"
                   >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-lime to-moss shadow-[var(--shadow-glow-lime)]">
-                      <Sparkles className="h-4 w-4 text-canvas" />
-                    </div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/hoodmap-logo.png"
+                      alt="HoodMap"
+                      className="h-8 w-8 rounded-lg shadow-[var(--shadow-glow-lime)]"
+                    />
                     <div className="leading-tight">
                       <div className="text-lg font-semibold tracking-tight text-ink">HoodMap</div>
                       <div className="text-[9px] font-medium uppercase tracking-wider text-ink-faint">
-                        Robinhood Chain · Wallet Intelligence
+                        Intelligence layer of robinhood chain
                       </div>
                     </div>
                   </Link>
@@ -167,9 +173,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               />
             </div>
             <div className="flex flex-1 items-center gap-2 md:hidden">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-lime to-moss">
-                <Sparkles className="h-4 w-4 text-canvas" />
-              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/hoodmap-logo.png" alt="HoodMap" className="h-8 w-8 rounded-lg" />
               <span className="font-semibold text-ink">HoodMap</span>
             </div>
             <ConnectWallet />

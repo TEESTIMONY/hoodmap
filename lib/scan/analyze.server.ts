@@ -30,9 +30,17 @@ import type {
   WhaleRow,
 } from "./types";
 
-// Scan window: last ~5000 blocks. At ~2s block time on Robinhood Chain,
-// that's roughly the last ~3 hours of activity.
-const SCAN_BLOCKS = 5_000n;
+// Scan window: last ~500,000 blocks. At ~2s block time on Robinhood Chain,
+// that's roughly the last ~11.5 days — wide enough to catch most of a
+// typical memecoin's active life, not just the last few hours. Used to be
+// 5,000 blocks (~3 hours); widened because that narrow a window meant the
+// wallet-cluster detection and whale table only ever saw wallets active
+// very recently, missing real clusters and holders visible on a token's
+// full history (confirmed by comparing against Bubblemaps, which showed
+// several real clusters for a token where this scanner found only one).
+// A real cost: fetchTransferLogs now issues far more RPC calls per scan,
+// so this trades scan speed (was a few seconds) for completeness.
+const SCAN_BLOCKS = 500_000n;
 // How many observed addresses to resolve to real balances via balanceOf.
 // 100 so HoodMap can render up to the top 100 holders (see step 8 below).
 const HOLDERS_TO_RESOLVE = 100;
@@ -59,16 +67,39 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   const fromBlock = latestBlock > SCAN_BLOCKS ? latestBlock - SCAN_BLOCKS : 0n;
 
   // ── 2. Transfer logs across window (+ contract-age estimate in parallel)
+  // Bounds more than just the log-fetch itself: every transfer collected
+  // here also needs a block-timestamp lookup downstream (batchBlockTimestamps,
+  // one eth_getBlock per unique block, 20 at a time) plus cluster-detection
+  // processing. A generous 25,000 cap was fine when the 5,000-block window
+  // made it essentially unreachable; at the current 500,000-block window a
+  // genuinely popular token can hit it, and 25,000 transfers' worth of
+  // timestamp lookups alone measured well past 5 minutes without finishing
+  // — worse than the old narrow-but-fast scan for exactly the tokens people
+  // most want to look at. 5,000 keeps the same order of magnitude that was
+  // already known to run in seconds.
+  const MAX_TRANSFER_LOGS = 5_000;
   const [transfers, ageSeconds] = await Promise.all([
-    fetchTransferLogs(address, fromBlock, latestBlock, 25_000),
-    estimateContractAgeSeconds(address, latestBlock).catch(() => undefined),
+    fetchTransferLogs(address, fromBlock, latestBlock, MAX_TRANSFER_LOGS),
+    // Binary search over eth_getCode — O(log n) RPC calls, so matching the
+    // wider transfer-log window costs barely more (a couple extra probes)
+    // despite searching 5x further back.
+    estimateContractAgeSeconds(address, latestBlock, SCAN_BLOCKS).catch(() => undefined),
   ]);
 
   if (transfers.length === 0) {
     warnings.push({
       severity: "info",
+      message: `No token transfers observed in the last ${SCAN_BLOCKS.toLocaleString()} blocks. Holder and cluster data will be limited.`,
+    });
+  } else if (transfers.length >= MAX_TRANSFER_LOGS) {
+    // A very active token can exhaust the log cap well before reaching the
+    // full window (this is far more likely now than at the old 5,000-block
+    // window) — say so rather than silently presenting a partial scan as
+    // if it covered the whole intended range.
+    warnings.push({
+      severity: "info",
       message:
-        "No token transfers observed in the last ~5,000 blocks. Holder and cluster data will be limited.",
+        "This token is active enough that the transfer-log cap was hit before covering the full scan window — holder and cluster data reflects only the most recent activity within that cap, not the full window.",
     });
   }
 
@@ -280,7 +311,15 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   const recentTransfers: Transfer[] = allTransfers.slice(0, RECENT_TRANSFERS);
 
   // ── 11. Score + health + warnings + summary — all from observed facts
-  const topWalletPct = rows[0]?.pct ?? 0;
+  // rows[0] (highest raw balance) is frequently a burn or liquidity address
+  // rather than an actual trading wallet — using it unfiltered here made
+  // the HoodScore's "Top wallet X%" language wildly inconsistent with the
+  // whale table below, which already excludes those roles (line ~228):
+  // e.g. one real scan reported "Top wallet 2.3%" while the whale table's
+  // actual largest holder was 0.07%, because the true #1 balance belonged
+  // to a burn address the whale table correctly doesn't call a "wallet".
+  // Matching the same filter here keeps the two consistent.
+  const topWalletPct = rows.find((r) => r.role !== "liquidity" && r.role !== "burn")?.pct ?? 0;
   const clusterPct = topGroups.reduce((s, g) => s + g.pctSupply, 0);
   const hoodScore = computeHoodScore({
     topWalletPct,

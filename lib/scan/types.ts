@@ -88,6 +88,10 @@ export interface TokenMeta {
   priceChange24h?: number;
   volume24hUsd?: number;
   txns24h?: { buys: number; sells: number };
+  // Only present when DexScreener has enhanced token info for this
+  // contract — absent for most memecoins. Consumers fall back to a
+  // generated avatar when this is undefined.
+  imageUrl?: string;
 }
 
 export type DataStatus = "live" | "partial" | "unavailable" | "mock";

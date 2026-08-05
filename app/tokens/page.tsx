@@ -20,7 +20,7 @@ export default function TokensPage() {
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-ink">
-              Top tokens on Robinhood Chain
+              Top memecoins on Robinhood Chain
             </h1>
             <p className="text-sm text-ink-faint">
               Up to 100 tokens ranked by unique wallets observed transacting on-chain.

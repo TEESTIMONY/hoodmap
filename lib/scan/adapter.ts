@@ -69,6 +69,7 @@ export async function analyzeToken(
       priceChange24h: dex.priceChange.h24,
       volume24hUsd: dex.volumeUsd.h24,
       txns24h: dex.txns.h24,
+      imageUrl: dex.imageUrl ?? base.token.imageUrl,
     },
     liquidity: {
       ...base.liquidity,

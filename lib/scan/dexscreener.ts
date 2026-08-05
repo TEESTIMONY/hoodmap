@@ -25,6 +25,7 @@ export interface DexPairData {
   dexUrl?: string;
   poolLabel?: string;
   pairAddress?: string;
+  imageUrl?: string;
   priceChange: DexWindowStats;
   volumeUsd: DexWindowStats;
   txns: DexTxnStats;
@@ -40,6 +41,10 @@ interface RawPair {
   url?: string;
   dexId?: string;
   pairAddress?: string;
+  // Only present when a project has submitted enhanced token info to
+  // DexScreener — most memecoins on this chain haven't, so this is
+  // frequently absent. Callers fall back to a generated avatar.
+  info?: { imageUrl?: string };
   priceChange?: { m5?: number; h1?: number; h6?: number; h24?: number };
   volume?: { m5?: number; h1?: number; h6?: number; h24?: number };
   txns?: {
@@ -78,6 +83,7 @@ export async function fetchDexScreenerToken(address: string): Promise<DexPairDat
     dexUrl: top?.url,
     poolLabel: `${base?.symbol ?? "?"}/${quote?.symbol ?? "?"} on ${top?.dexId ?? "DEX"}`,
     pairAddress: top?.pairAddress,
+    imageUrl: top?.info?.imageUrl,
     priceChange: {
       m5: top?.priceChange?.m5,
       h1: top?.priceChange?.h1,

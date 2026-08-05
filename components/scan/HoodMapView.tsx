@@ -18,6 +18,7 @@ import {
 } from "@/lib/scan/hoodmap-layout";
 import { cn, hashString } from "@/lib/utils";
 import { WalletDetailPanel } from "@/components/scan/WalletDetailPanel";
+import { BubbleLoader } from "@/components/scan/BubbleLoader";
 
 const CANVAS_HEIGHT = 440;
 const MAX_HOLDERS = 100;
@@ -288,31 +289,41 @@ export function HoodMapView({
 
   return (
     <GlassPanel className="p-4">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm font-medium text-ink">HoodMap</div>
-        <div className="flex flex-wrap items-center gap-2.5 text-[10px] text-ink-faint">
+        {/* A single scrollable row on narrow screens instead of wrapping —
+            with up to 9 items (8 clusters + Unclustered), wrapping stacks
+            them into a tall column, and items-center on the row above then
+            centers the title against that whole tall block instead of
+            sitting at its top like a normal header. */}
+        <div className="-mx-1 flex items-center gap-2.5 overflow-x-auto px-1 text-[10px] text-ink-faint sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
           {groups.length === 0 ? (
-            <span>No wallet clusters detected</span>
+            <span className="shrink-0">No wallet clusters detected</span>
           ) : (
             groups.slice(0, 8).map((g) => (
-              <span key={g.id} className="flex items-center gap-1">
+              <span key={g.id} className="flex shrink-0 items-center gap-1 whitespace-nowrap">
                 <span
-                  className="h-1.5 w-1.5 rounded-full"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{ background: bubbleColorCss(clusterColors.get(g.id)!) }}
                 />
                 {g.label}
               </span>
             ))
           )}
-          <span className="flex items-center gap-1">
+          <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
             <span
-              className="h-1.5 w-1.5 rounded-full"
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
               style={{ background: bubbleColorCss(NEUTRAL_BUBBLE_COLOR) }}
             />
             Unclustered
           </span>
         </div>
       </div>
+      <p className="mb-3 text-[11px] text-ink-faint">
+        Bubbles are the holders active in the recent scan window, sized by their share of supply —
+        not the full holder list (this chain has no indexer), so a quiet long-time holder may not
+        appear here even if they hold a lot.
+      </p>
 
       <div
         ref={containerRef}
@@ -323,6 +334,11 @@ export function HoodMapView({
         )}
         style={{ height: CANVAS_HEIGHT, touchAction: "none" }}
       >
+        {!ready && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <BubbleLoader label="Laying out the bubble map…" />
+          </div>
+        )}
         <div
           ref={viewWrapperRef}
           className="absolute inset-0"

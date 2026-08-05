@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight, Check, Copy, RefreshCw, TrendingUp } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { BubbleLoader } from "@/components/scan/BubbleLoader";
 import { discoverTrendingTokensServer } from "@/lib/scan/actions";
 import { fetchDexScreenerToken, type DexPairData } from "@/lib/scan/dexscreener";
 import type { TrendingToken } from "@/lib/scan/discover.server";
@@ -79,13 +80,23 @@ export function TopTokens({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit]);
 
+  // Discovery ranks by unique traders (the only signal available before
+  // DexScreener enrichment, which happens after and per-token). Display
+  // order is by 24h volume once that data is in — a token with no pair on
+  // DexScreener yet (dex: null, still enriching or no pair exists) sorts
+  // below every token with a known volume, including a real $0, rather
+  // than being conflated with an actual zero.
+  const sortedRows = rows
+    ? [...rows].sort((a, b) => (b.dex?.volumeUsd.h24 ?? -1) - (a.dex?.volumeUsd.h24 ?? -1))
+    : [];
+
   return (
     <GlassPanel className="overflow-hidden rounded-lg">
       <div className="flex items-center gap-2 border-b border-line px-4 py-3">
         {showHeader && (
           <div className="flex items-center gap-2 text-sm font-medium text-ink">
             <TrendingUp className="h-4 w-4 text-lime-soft" />
-            Top tokens on Robinhood Chain
+            Top memecoins on Robinhood Chain
           </div>
         )}
         {enriching && (
@@ -106,10 +117,8 @@ export function TopTokens({
       {error && <div className="px-4 py-6 text-sm text-danger">{error}</div>}
 
       {!error && (loading || !rows) && (
-        <div className="flex flex-col gap-2 p-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-10 animate-pulse rounded-lg bg-white/[0.03]" />
-          ))}
+        <div className="flex items-center justify-center py-10">
+          <BubbleLoader label="Scanning Robinhood Chain for trending memecoins…" />
         </div>
       )}
 
@@ -129,7 +138,9 @@ export function TopTokens({
                 <th className="px-2 py-2 text-right font-medium">Price</th>
                 <th className="px-2 py-2 text-right font-medium">Mcap</th>
                 <th className="px-2 py-2 text-right font-medium">Liquidity</th>
-                <th className="px-2 py-2 text-right font-medium">24h Vol</th>
+                <th className="px-2 py-2 text-right font-medium" title="List is sorted by this column, highest first">
+                  24h Vol ↓
+                </th>
                 <th className="px-2 py-2 text-right font-medium">1h</th>
                 <th className="px-2 py-2 text-right font-medium">6h</th>
                 <th className="px-2 py-2 text-right font-medium">24h</th>
@@ -140,7 +151,7 @@ export function TopTokens({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
+              {sortedRows.map((r, i) => (
                 <tr
                   key={r.address}
                   className="border-b border-line/60 transition hover:bg-white/[0.02]"
@@ -152,7 +163,13 @@ export function TopTokens({
                         href={`/scan?address=${r.address}`}
                         className="flex min-w-0 flex-1 items-center gap-2.5"
                       >
-                        <Avatar seed={r.address} name={r.symbol || r.address} size="sm" ring={false} />
+                        <Avatar
+                          seed={r.address}
+                          name={r.symbol || r.address}
+                          size="sm"
+                          ring={false}
+                          imageUrl={r.dex?.imageUrl}
+                        />
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate font-medium text-ink">{r.symbol}</span>
@@ -212,9 +229,10 @@ export function TopTokens({
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2.5 text-[11px] text-ink-faint">
         <span>
-          Ranked by unique wallets observed transacting on-chain in the last ~800 blocks — read
-          directly from Robinhood Chain, not an index. Price, market cap, liquidity and % change
-          come from DexScreener where a pair exists; shown as "—" otherwise.
+          Sorted by 24h volume, highest first. Candidates are discovered by unique wallets observed
+          transacting on-chain in the last ~800 blocks — read directly from Robinhood Chain, not an
+          index. Price, market cap, liquidity and % change come from DexScreener where a pair
+          exists; shown as "—" otherwise, and sorted last.
         </span>
         {viewAllHref && (
           <Link href={viewAllHref} className="shrink-0 whitespace-nowrap text-lime-soft hover:underline">

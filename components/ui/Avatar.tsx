@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { hashString } from "@/lib/utils";
 import type { Tier } from "@/lib/mock-data";
 
@@ -42,26 +45,52 @@ interface AvatarProps {
   tier?: Tier;
   ring?: boolean;
   className?: string;
+  // A real logo (e.g. from DexScreener) — most memecoins on this chain
+  // haven't submitted one, and even when a URL is given it can 404 or fail
+  // to load, so this always has the gradient-initials look as a fallback,
+  // never a broken-image icon.
+  imageUrl?: string;
 }
 
-export function Avatar({ seed, name, size = "md", tier, ring = true, className = "" }: AvatarProps) {
+export function Avatar({
+  seed,
+  name,
+  size = "md",
+  tier,
+  ring = true,
+  className = "",
+  imageUrl,
+}: AvatarProps) {
   const px = SIZE_PX[size];
   const [from, to] = gradientFor(seed);
   const fontSize = Math.max(10, Math.round(px * 0.36));
+  const [imageFailed, setImageFailed] = useState(false);
 
-  const core = (
-    <div
-      className="flex items-center justify-center rounded-full font-semibold text-white"
-      style={{
-        width: px,
-        height: px,
-        fontSize,
-        background: `linear-gradient(135deg, ${from}, ${to})`,
-      }}
-    >
-      {initials(name)}
-    </div>
-  );
+  const core =
+    imageUrl && !imageFailed ? (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={imageUrl}
+        alt={name}
+        width={px}
+        height={px}
+        className="rounded-full object-cover"
+        style={{ width: px, height: px }}
+        onError={() => setImageFailed(true)}
+      />
+    ) : (
+      <div
+        className="flex items-center justify-center rounded-full font-semibold text-white"
+        style={{
+          width: px,
+          height: px,
+          fontSize,
+          background: `linear-gradient(135deg, ${from}, ${to})`,
+        }}
+      >
+        {initials(name)}
+      </div>
+    );
 
   if (!ring || !tier) {
     return <div className={className}>{core}</div>;

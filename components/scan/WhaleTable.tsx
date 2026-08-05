@@ -9,7 +9,13 @@ import { cn } from "@/lib/utils";
 export function WhaleTable({ whales }: { whales: WhaleRow[] }) {
   return (
     <GlassPanel className="overflow-hidden p-4">
-      <div className="mb-3 text-sm font-medium text-ink">Whale intelligence</div>
+      <div className="mb-1 text-sm font-medium text-ink">Whale intelligence</div>
+      <p className="mb-3 text-[11px] text-ink-faint">
+        These are the largest holders among wallets active in the recent scan window — this chain
+        has no full holder index, so a long-time holder who simply hasn't transacted recently won't
+        appear here even if they hold a lot. For a high-supply token, an individual recently-active
+        wallet's true % can legitimately round to 0.00% without anything being wrong.
+      </p>
       {whales.length === 0 ? (
         <p className="text-xs text-ink-faint">No whale-sized holders observed in this window.</p>
       ) : (

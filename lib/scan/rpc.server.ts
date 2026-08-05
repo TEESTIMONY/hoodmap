@@ -41,6 +41,41 @@ const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
 );
 
+// ERC-721/1155's Transfer/TransferSingle-adjacent events share the exact
+// same log signature as ERC-20's Transfer, so a log-based discovery scan
+// (this chain has no indexer to ask "is this contract fungible?") can't
+// tell an NFT collection apart from a real token just from the logs —
+// confirmed in practice when an actual NFT collection ("H00dle NFT") showed
+// up in trending-token discovery. ERC-165's supportsInterface is the
+// correct, direct way to ask a contract what it actually is, rather than
+// guessing from its name.
+const ERC165_ABI = parseAbi(["function supportsInterface(bytes4) view returns (bool)"]);
+const ERC721_INTERFACE_ID = "0x80ac58cd" as const;
+const ERC1155_INTERFACE_ID = "0xd9b67a26" as const;
+
+export async function isNftContract(address: string): Promise<boolean> {
+  const token = getAddress(address);
+  const [is721, is1155] = await Promise.all([
+    publicClient
+      .readContract({
+        address: token,
+        abi: ERC165_ABI,
+        functionName: "supportsInterface",
+        args: [ERC721_INTERFACE_ID],
+      })
+      .catch(() => false),
+    publicClient
+      .readContract({
+        address: token,
+        abi: ERC165_ABI,
+        functionName: "supportsInterface",
+        args: [ERC1155_INTERFACE_ID],
+      })
+      .catch(() => false),
+  ]);
+  return Boolean(is721) || Boolean(is1155);
+}
+
 // Wrapped-native quote token — the "priced against" side of nearly every
 // swap on Robinhood Chain. Shared by discovery (excluded from trending
 // ranking, since it dominates raw transfer counts) and wallet PnL
@@ -116,6 +151,12 @@ export async function getLatestBlockNumber(): Promise<bigint> {
 
 // RPC limit: ~1000 blocks per eth_getLogs call. Chunk requests.
 const CHUNK = 900n;
+// Fetching one chunk at a time was fine at the token scanner's old
+// 5,000-block window (a handful of chunks). At the current 500,000-block
+// window that's ~550+ round trips — sequential, that's many minutes of
+// pure RPC latency. Concurrency here mirrors the same fix already applied
+// to the wallet scanner's transfer-log fetcher.
+const CHUNK_CONCURRENCY = 6;
 
 export interface RawTransfer {
   from: Address;
@@ -133,52 +174,54 @@ export async function fetchTransferLogs(
   maxLogs = 20_000,
 ): Promise<RawTransfer[]> {
   const address = getAddress(token);
-  const out: RawTransfer[] = [];
-  let start = fromBlock;
-  while (start <= toBlock) {
-    const end = start + CHUNK - 1n > toBlock ? toBlock : start + CHUNK - 1n;
-    let logs: Log[] = [];
+
+  async function fetchChunk(start: bigint, end: bigint): Promise<Log[]> {
     try {
-      logs = await publicClient.getLogs({
-        address,
-        event: TRANSFER_EVENT,
-        fromBlock: start,
-        toBlock: end,
-      });
+      return await publicClient.getLogs({ address, event: TRANSFER_EVENT, fromBlock: start, toBlock: end });
     } catch {
       // If a chunk fails (rare), try halved range once
       const mid = start + (end - start) / 2n;
       try {
-        const a = await publicClient.getLogs({
-          address,
-          event: TRANSFER_EVENT,
-          fromBlock: start,
-          toBlock: mid,
-        });
-        const b = await publicClient.getLogs({
-          address,
-          event: TRANSFER_EVENT,
-          fromBlock: mid + 1n,
-          toBlock: end,
-        });
-        logs = [...a, ...b];
+        const [a, b] = await Promise.all([
+          publicClient.getLogs({ address, event: TRANSFER_EVENT, fromBlock: start, toBlock: mid }),
+          publicClient.getLogs({ address, event: TRANSFER_EVENT, fromBlock: mid + 1n, toBlock: end }),
+        ]);
+        return [...a, ...b];
       } catch {
-        logs = [];
+        return [];
       }
     }
-    for (const l of logs as (Log & { args?: { from: Address; to: Address; value: bigint } })[]) {
-      if (!l.args) continue;
-      out.push({
-        from: l.args.from,
-        to: l.args.to,
-        valueRaw: l.args.value,
-        blockNumber: l.blockNumber ?? 0n,
-        txHash: l.transactionHash ?? "0x",
-        logIndex: l.logIndex ?? 0,
-      });
-      if (out.length >= maxLogs) return out;
+  }
+
+  const chunkStarts: bigint[] = [];
+  for (let start = fromBlock; start <= toBlock; start += CHUNK) chunkStarts.push(start);
+
+  const out: RawTransfer[] = [];
+  for (let i = 0; i < chunkStarts.length && out.length < maxLogs; i += CHUNK_CONCURRENCY) {
+    const batch = chunkStarts.slice(i, i + CHUNK_CONCURRENCY);
+    // Chunks within a batch run concurrently, but results are appended in
+    // the same ascending-block-order the old sequential loop produced —
+    // nothing downstream should observe a difference besides speed.
+    const results = await Promise.all(
+      batch.map((start) => {
+        const end = start + CHUNK - 1n > toBlock ? toBlock : start + CHUNK - 1n;
+        return fetchChunk(start, end);
+      }),
+    );
+    outer: for (const logs of results) {
+      for (const l of logs as (Log & { args?: { from: Address; to: Address; value: bigint } })[]) {
+        if (!l.args) continue;
+        out.push({
+          from: l.args.from,
+          to: l.args.to,
+          valueRaw: l.args.value,
+          blockNumber: l.blockNumber ?? 0n,
+          txHash: l.transactionHash ?? "0x",
+          logIndex: l.logIndex ?? 0,
+        });
+        if (out.length >= maxLogs) break outer;
+      }
     }
-    start = end + 1n;
   }
   return out;
 }

@@ -151,8 +151,13 @@ export default function ScanPage() {
         </form>
 
         {state.kind === "loading" && (
-          <div className="mt-6 flex flex-col items-center gap-4">
+          <div className="mt-6 flex flex-col items-center gap-4 text-center">
             <BubbleLoader />
+            <p className="max-w-md text-xs text-ink-faint">
+              Reading Robinhood Chain across the last 500,000 blocks (~11 days) to find real wallet
+              clusters and holders, not just the last few hours — an active token can take a while
+              to fully scan.
+            </p>
           </div>
         )}
 
@@ -244,7 +249,7 @@ export default function ScanPage() {
         >
           <span className="flex items-center gap-2 text-sm font-medium text-ink">
             <TrendingUp className="h-4 w-4 text-lime-soft" />
-            Top tokens on Robinhood Chain
+            Top memecoins on Robinhood Chain
           </span>
           <ChevronDown
             className={`h-4 w-4 text-ink-faint transition-transform ${topTokensOpen ? "rotate-180" : ""}`}

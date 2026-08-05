@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { CopyAddress } from "@/components/profile/CopyAddress";
 import { StatCard } from "@/components/ui/GlassPanel";
+import { Avatar } from "@/components/ui/Avatar";
 import type { TokenMeta } from "@/lib/scan/types";
 import { shortNumber } from "@/lib/scan/adapter";
 import { cn } from "@/lib/utils";
@@ -19,26 +20,37 @@ export function TokenHeader({ token }: { token: TokenMeta }) {
 
   return (
     <div className="animate-fade-up">
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold text-ink">
-          {token.name} <span className="text-ink-faint">({token.symbol})</span>
-        </h1>
-        <span className="rounded-full border border-line bg-white/[0.04] px-2 py-0.5 text-[11px] text-ink-faint">
-          {formatAgo(token.createdAgoSeconds)}
-        </span>
-      </div>
-      <div className="mt-1 flex items-center gap-2">
-        <CopyAddress address={token.address} />
-        {token.dexUrl && (
-          <a
-            href={token.dexUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-moss-soft hover:underline"
-          >
-            View chart
-          </a>
-        )}
+      <div className="flex items-start gap-3">
+        <Avatar
+          seed={token.address}
+          name={token.symbol || token.name}
+          size="lg"
+          ring={false}
+          imageUrl={token.imageUrl}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold text-ink">
+              {token.name} <span className="text-ink-faint">({token.symbol})</span>
+            </h1>
+            <span className="rounded-full border border-line bg-white/[0.04] px-2 py-0.5 text-[11px] text-ink-faint">
+              {formatAgo(token.createdAgoSeconds)}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center gap-2">
+            <CopyAddress address={token.address} />
+            {token.dexUrl && (
+              <a
+                href={token.dexUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-moss-soft hover:underline"
+              >
+                View chart
+              </a>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
