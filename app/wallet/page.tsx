@@ -14,6 +14,11 @@ import { BubbleLoader } from "@/components/scan/BubbleLoader";
 import { analyzeWalletServer } from "@/lib/scan/actions";
 import type { WalletPnlSummary } from "@/lib/scan/wallet-types";
 
+// See the matching comment on the token scan page — analyzeWalletServer can
+// take longer than a platform's default Server Action timeout for a very
+// active wallet.
+export const maxDuration = 300;
+
 // Isolated so only THIS reads useSearchParams() — see the matching comment
 // on the token scan page for why this needs its own Suspense boundary.
 function AddressFromQuery({ onAddress }: { onAddress: (address: string) => void }) {

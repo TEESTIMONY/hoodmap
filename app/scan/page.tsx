@@ -22,6 +22,13 @@ import { TopTokens } from "@/components/scan/TopTokens";
 import { analyzeToken, type ProgressStep } from "@/lib/scan/adapter";
 import type { AnalysisResult } from "@/lib/scan/types";
 
+// Extends the Server Action timeout for this page beyond whatever a
+// deployment platform defaults to (e.g. Vercel's Hobby-tier default is
+// 10s) — analyzeTokenServer can legitimately take longer than that for an
+// active token. Platforms cap this to whatever their own plan allows, so
+// requesting more than a given tier permits is harmless, not an error.
+export const maxDuration = 300;
+
 const STEPS: { key: ProgressStep; label: string }[] = [
   { key: "validating", label: "Validate contract" },
   { key: "onchain", label: "Read Robinhood Chain" },
@@ -154,7 +161,7 @@ export default function ScanPage() {
           <div className="mt-6 flex flex-col items-center gap-4 text-center">
             <BubbleLoader />
             <p className="max-w-md text-xs text-ink-faint">
-              Reading Robinhood Chain across the last 500,000 blocks (~11 days) to find real wallet
+              Reading Robinhood Chain across the last 50,000 blocks (~1.15 days) to find real wallet
               clusters and holders, not just the last few hours — an active token can take a while
               to fully scan.
             </p>

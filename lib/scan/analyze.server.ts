@@ -30,17 +30,19 @@ import type {
   WhaleRow,
 } from "./types";
 
-// Scan window: last ~500,000 blocks. At ~2s block time on Robinhood Chain,
-// that's roughly the last ~11.5 days — wide enough to catch most of a
-// typical memecoin's active life, not just the last few hours. Used to be
-// 5,000 blocks (~3 hours); widened because that narrow a window meant the
-// wallet-cluster detection and whale table only ever saw wallets active
-// very recently, missing real clusters and holders visible on a token's
-// full history (confirmed by comparing against Bubblemaps, which showed
-// several real clusters for a token where this scanner found only one).
-// A real cost: fetchTransferLogs now issues far more RPC calls per scan,
-// so this trades scan speed (was a few seconds) for completeness.
-const SCAN_BLOCKS = 500_000n;
+// Scan window: last ~50,000 blocks (~1.15 days at ~2s block time) — wider
+// than the original 5,000-block (~3hr) window that missed real clusters
+// visible over a token's fuller history (confirmed against Bubblemaps),
+// but deliberately NOT the 500,000-block window tried first. That version
+// caused real production 500s on Vercel: even before counting per-transfer
+// processing, ~556 chunks at 900 blocks/chunk (~93 sequential rounds at
+// this file's chunk concurrency) plausibly took 45-90+ seconds just to
+// fetch, regardless of how active the token was — well past a serverless
+// function's default execution limit. This is a smaller, safer step in
+// the same direction, not the ceiling; revisit once maxDuration (set on
+// the pages that call this) and real timing on the actual deployment
+// target are both confirmed, not just measured in local testing.
+const SCAN_BLOCKS = 50_000n;
 // How many observed addresses to resolve to real balances via balanceOf.
 // 100 so HoodMap can render up to the top 100 holders (see step 8 below).
 const HOLDERS_TO_RESOLVE = 100;
@@ -70,14 +72,13 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   // Bounds more than just the log-fetch itself: every transfer collected
   // here also needs a block-timestamp lookup downstream (batchBlockTimestamps,
   // one eth_getBlock per unique block, 20 at a time) plus cluster-detection
-  // processing. A generous 25,000 cap was fine when the 5,000-block window
-  // made it essentially unreachable; at the current 500,000-block window a
-  // genuinely popular token can hit it, and 25,000 transfers' worth of
-  // timestamp lookups alone measured well past 5 minutes without finishing
-  // — worse than the old narrow-but-fast scan for exactly the tokens people
-  // most want to look at. 5,000 keeps the same order of magnitude that was
-  // already known to run in seconds.
-  const MAX_TRANSFER_LOGS = 5_000;
+  // processing — that downstream cost, not the log fetch, was the main
+  // reason the original 25,000 cap (harmless at the old 5,000-block window)
+  // caused a scan to run past 5 minutes once the window widened. 3,000
+  // stays close to the ~1,330-transfer real case that was already known to
+  // run in seconds, with headroom, rather than assuming a bigger number is
+  // safe without measuring it again.
+  const MAX_TRANSFER_LOGS = 3_000;
   const [transfers, ageSeconds] = await Promise.all([
     fetchTransferLogs(address, fromBlock, latestBlock, MAX_TRANSFER_LOGS),
     // Binary search over eth_getCode — O(log n) RPC calls, so matching the
