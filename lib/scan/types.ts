@@ -18,6 +18,11 @@ export interface WalletNode {
   balance: number; // token units (decimals-adjusted)
   pctSupply: number; // 0..100
   group?: string;
+  // 1-indexed position by raw balance among every resolved holder in this
+  // scan window (including liquidity/burn addresses, matching how a block
+  // explorer's "top holders" rank works) — undefined only if this node
+  // fell outside the resolved candidate set entirely.
+  rank?: number;
 }
 
 export interface WalletEdge {
@@ -121,6 +126,8 @@ export interface WhaleRow {
   recentTxs: number;
   labels: string[];
   role: WalletRole;
+  // Same 1-indexed overall-holder rank as WalletNode.rank — see that comment.
+  rank?: number;
 }
 
 export interface HealthMetric {

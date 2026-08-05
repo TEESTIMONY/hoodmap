@@ -55,7 +55,14 @@ export function WalletDetailPanel({
     <div className="mt-3 rounded-xl border border-line bg-white/[0.03] p-4 animate-fade-up">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-mono text-sm text-ink">{wallet.label ?? shortAddress(wallet.id)}</div>
+          <div className="flex items-center gap-1.5">
+            {wallet.rank != null && (
+              <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-ink-faint">
+                #{wallet.rank}
+              </span>
+            )}
+            <div className="font-mono text-sm text-ink">{wallet.label ?? shortAddress(wallet.id)}</div>
+          </div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <Chip
               icon={<span className={cn("h-1.5 w-1.5 rounded-full", ROLE_DOT_CLASS[wallet.role])} />}

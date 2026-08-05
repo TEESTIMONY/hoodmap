@@ -185,6 +185,11 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
       return { addr, balanceRaw, balance, pct, activity: activity.get(addr) ?? 0, role };
     });
   rows.sort((a, b) => Number(b.balanceRaw - a.balanceRaw));
+  // 1-indexed rank by raw balance, matching a block explorer's "top
+  // holders" list — computed once here, right after the sort it depends
+  // on, so every downstream consumer (whale table, HoodMap bubbles) reads
+  // the same rank rather than each recomputing its own position.
+  const rankByAddr = new Map(rows.map((r, i) => [r.addr, i + 1]));
 
   const developerRow =
     rows.find((r) => r.role === "developer") ??
@@ -254,6 +259,7 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
       balance,
       pctSupply: pct,
       group: groupOf.get(addr),
+      rank: rankByAddr.get(addr),
     };
   });
   const edges: WalletEdge[] = [];
@@ -288,6 +294,7 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
       : Number(formatUnits(nativeBalances.get(r.addr) ?? 0n, 18)),
     connectedWallets: countConnections(r.addr, edgeCount),
     recentTxs: r.activity,
+    rank: rankByAddr.get(r.addr),
     labels: labelsFor(r, deployer),
     role: r.role,
   }));

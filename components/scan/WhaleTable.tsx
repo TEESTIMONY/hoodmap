@@ -31,6 +31,11 @@ export function WhaleTable({ whales }: { whales: WhaleRow[] }) {
         <div className="flex flex-col divide-y divide-line">
           {whales.map((w) => (
             <div key={w.address} className="flex flex-wrap items-center gap-2 py-2.5 first:pt-0 last:pb-0">
+              {w.rank != null && (
+                <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-ink-faint">
+                  #{w.rank}
+                </span>
+              )}
               <span className={cn("h-2 w-2 shrink-0 rounded-full", ROLE_DOT_CLASS[w.role])} />
               <span className="font-mono text-xs text-ink">{shortAddress(w.address)}</span>
               <div className="flex flex-wrap gap-1">

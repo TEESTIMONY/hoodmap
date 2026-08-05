@@ -200,10 +200,14 @@ export function HoodMapView({
       arr.push(n.id);
       byGroup.set(n.group, arr);
     }
+    // Chained (a-b, b-c, c-d, …), not a star hub — matches how a reference
+    // bubble map draws a cluster as a connected sequence of dots rather
+    // than everything radiating from one anchor.
     for (const members of byGroup.values()) {
       if (members.length < 2) continue;
-      const [anchor, ...rest] = members;
-      for (const m of rest) links.push({ a: anchor, b: m });
+      for (let i = 0; i < members.length - 1; i++) {
+        links.push({ a: members[i], b: members[i + 1] });
+      }
     }
 
     let alpha = 1;
@@ -280,8 +284,9 @@ export function HoodMapView({
   }
   for (const members of byGroup.values()) {
     if (members.length < 2) continue;
-    const [anchor, ...rest] = members;
-    for (const m of rest) clusterLinkPairs.push({ a: anchor.id, b: m.id });
+    for (let i = 0; i < members.length - 1; i++) {
+      clusterLinkPairs.push({ a: members[i].id, b: members[i + 1].id });
+    }
   }
 
   const selected = selectedId ? nodeById.get(selectedId) : undefined;
@@ -403,7 +408,7 @@ export function HoodMapView({
                   }}
                   type="button"
                   onClick={() => setSelectedId(n.id)}
-                  aria-label={`${n.label ?? n.id} — ${n.pctSupply.toFixed(2)}% of supply`}
+                  aria-label={`${n.rank != null ? `#${n.rank} ` : ""}${n.label ?? n.id} — ${n.pctSupply.toFixed(2)}% of supply`}
                   className={cn("absolute rounded-full outline-none", isSelected && "z-10")}
                   style={{
                     left: pos.x - pos.r,
@@ -423,13 +428,17 @@ export function HoodMapView({
                     }}
                   >
                     {/* Visual layer: one-time pop-in (its own transform),
-                        gradient fill + colored glow, hover/selection via
-                        filter + ring — neither touches transform, so nothing
-                        fights the idle layer above. */}
+                        flat-ish gradient fill + subtle colored glow,
+                        hover/selection via filter + ring — neither touches
+                        transform, so nothing fights the idle layer above.
+                        Selected uses a clean white ring (not the brand
+                        lime) — a distinct "this one" outline independent
+                        of cluster color, matching a reference bubble map's
+                        selection treatment. */}
                     <div
                       className={cn(
                         "h-full w-full rounded-full ring-2 ring-canvas transition-[filter] duration-150 hover:brightness-110",
-                        isSelected && "ring-lime/70",
+                        isSelected && "ring-[3px] ring-white/85",
                       )}
                       style={{
                         background: bubbleGradientCss(color),

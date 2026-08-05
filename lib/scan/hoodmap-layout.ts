@@ -45,13 +45,15 @@ export function bubbleColorCss(c: BubbleColor): string {
   return `hsl(${c.h}, ${c.s}%, ${c.l}%)`;
 }
 
-// Radial gradient with a highlight offset toward the top-left, like light
-// catching the surface of a real soap bubble, fading to a darker rim.
+// Subtle radial gradient — a soft highlight toward the top-left rather than
+// a glossy "soap bubble" sheen, closer to how a flat-filled reference map
+// (e.g. Bubblemaps) renders holder dots: mostly a flat solid fill, just
+// enough falloff toward the rim to read as a circle rather than a disc.
 export function bubbleGradientCss(c: BubbleColor): string {
-  const light = `hsl(${c.h}, ${c.s}%, ${Math.min(94, c.l + 28)}%)`;
+  const light = `hsl(${c.h}, ${c.s}%, ${Math.min(80, c.l + 10)}%)`;
   const mid = bubbleColorCss(c);
-  const dark = `hsl(${c.h}, ${Math.max(0, c.s - 8)}%, ${Math.max(10, c.l - 24)}%)`;
-  return `radial-gradient(circle at 32% 26%, ${light} 0%, ${mid} 55%, ${dark} 100%)`;
+  const dark = `hsl(${c.h}, ${Math.max(0, c.s - 4)}%, ${Math.max(14, c.l - 10)}%)`;
+  return `radial-gradient(circle at 35% 30%, ${light} 0%, ${mid} 60%, ${dark} 100%)`;
 }
 
 export function bubbleGlowCss(c: BubbleColor, radiusPx: number, intensity = 1): string {
@@ -59,9 +61,13 @@ export function bubbleGlowCss(c: BubbleColor, radiusPx: number, intensity = 1): 
   // only works on #RRGGBBAA hex colors. Appending it to hsl(...) produces
   // an invalid color the browser silently drops, so the glow doesn't
   // render at all rather than rendering wrong.
-  const alpha = intensity > 1 ? 0.67 : 0.33;
+  // Default (unselected) glow is deliberately faint — a reference map like
+  // Bubblemaps shows almost no halo on ordinary nodes, just a clean flat
+  // dot; the glow becomes a real highlight only when intensity is raised
+  // (selection), not as an always-on background effect.
+  const alpha = intensity > 1 ? 0.55 : 0.12;
   const glow = `hsla(${c.h}, ${c.s}%, ${c.l}%, ${alpha})`;
-  const spread = Math.max(4, radiusPx * 0.5) * intensity;
+  const spread = Math.max(2, radiusPx * (intensity > 1 ? 0.55 : 0.2));
   return `0 0 ${spread}px ${glow}`;
 }
 
