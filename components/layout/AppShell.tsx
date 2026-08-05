@@ -2,29 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Bell,
-  Hash,
-  Home,
-  Menu,
-  MessageCircle,
-  ScanLine,
-  Search,
-  Sparkles,
-  User,
-  X,
-} from "lucide-react";
+import { Bell, Menu, ScanLine, Search, Sparkles, TrendingUp, User, Wallet, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { ConnectWallet } from "@/components/wallet/ConnectWallet";
 import { AuroraBackdrop } from "@/components/layout/AuroraBackdrop";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Feed", icon: Home },
   { href: "/scan", label: "Scan", icon: ScanLine },
+  { href: "/tokens", label: "Top Tokens", icon: TrendingUp },
+  { href: "/wallet", label: "Wallet Passport", icon: Wallet },
   { href: "/constellation", label: "Constellation", icon: Sparkles },
-  { href: "/channels", label: "Channels", icon: Hash, soon: true },
-  { href: "/messages", label: "Messages", icon: MessageCircle, soon: true },
   { href: "/notifications", label: "Notifications", icon: Bell, soon: true },
   { href: "/profile/me", label: "Profile", icon: User },
 ];
@@ -92,7 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Nav rail (desktop) */}
         <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 flex-col justify-between border-r border-line px-4 py-6 md:flex">
           <div>
-            <Link href="/" className="mb-8 flex items-center gap-2 px-2">
+            <Link href="/scan" className="mb-8 flex items-center gap-2 px-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-lime to-moss shadow-[var(--shadow-glow-lime)]">
                 <Sparkles className="h-4 w-4 text-canvas" />
               </div>
@@ -125,7 +113,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div>
                 <div className="mb-8 flex items-center justify-between px-2">
                   <Link
-                    href="/"
+                    href="/scan"
                     onClick={() => setMobileNavOpen(false)}
                     className="flex items-center gap-2"
                   >

@@ -45,6 +45,11 @@ export interface Transfer {
   ageSeconds: number;
   kind: "buy" | "sell" | "transfer" | "mint" | "burn";
   blockNumber?: number;
+  // Position of this Transfer event within its transaction's logs. A single
+  // transaction can emit multiple Transfer events for the same token (e.g. a
+  // multi-hop swap), which share a hash and blockNumber but not a logIndex —
+  // needed to give each one a unique React list key.
+  logIndex: number;
 }
 
 export interface HolderBucket {
@@ -143,6 +148,10 @@ export interface AnalysisResult {
   developer: WalletNode;
   liquidity: LiquiditySummary;
   transfers: Transfer[];
+  // Every transfer scanned in the observation window (not just the top-25
+  // shown in the "Recent transfers" panel) — lets HoodMap's per-wallet
+  // Transfers view filter down to one wallet without a second on-chain query.
+  allTransfers: Transfer[];
   graph: { nodes: WalletNode[]; edges: WalletEdge[] };
   aiSummary: string;
   dataSources: DataSources;

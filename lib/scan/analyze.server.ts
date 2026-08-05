@@ -34,7 +34,8 @@ import type {
 // that's roughly the last ~3 hours of activity.
 const SCAN_BLOCKS = 5_000n;
 // How many observed addresses to resolve to real balances via balanceOf.
-const HOLDERS_TO_RESOLVE = 80;
+// 100 so HoodMap can render up to the top 100 holders (see step 8 below).
+const HOLDERS_TO_RESOLVE = 100;
 // Latest N transfers to show in the recent-transfers panel.
 const RECENT_TRANSFERS = 25;
 
@@ -179,12 +180,19 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   }
   const topGroups = detectWalletClusters(transfers, excluded, rows, deployer, SCAN_BLOCKS);
 
-  // ── 8. Wallet graph nodes/edges for the visualization
+  // ── 8. Wallet graph nodes/edges for the visualization — up to top 100
+  // holders for HoodMap (bounded by HOLDERS_TO_RESOLVE above, since a row
+  // only exists for an address that actually got a resolved balance).
+  // Deliberately NOT expanded with every cluster member: a cluster can be
+  // far larger than 100 wallets (observed: a single co-funded cluster with
+  // 2,200+ members on a bot-heavy token), and pulling all of them in would
+  // blow straight through the "up to 100" cap. groupOf below still tags
+  // whichever of these top holders happen to be clustered — cluster
+  // detection itself isn't touched, only which of its output gets rendered.
   const graphAddrs = new Set<string>();
-  const topRows = rows.slice(0, 40);
+  const topRows = rows.slice(0, 100);
   for (const r of topRows) graphAddrs.add(r.addr);
   if (developerRow) graphAddrs.add(developerRow.addr);
-  for (const g of topGroups) for (const w of g.wallets) graphAddrs.add(w);
   const groupOf = new Map<string, string>();
   for (const g of topGroups) for (const w of g.wallets) groupOf.set(w, g.id);
   const nodes: WalletNode[] = Array.from(graphAddrs).map((addr) => {
@@ -232,13 +240,17 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
     role: r.role,
   }));
 
-  // ── 10. Recent transfers with real block timestamps
-  const latestTransfers = [...transfers]
-    .sort((a, b) => Number(b.blockNumber - a.blockNumber) || b.logIndex - a.logIndex)
-    .slice(0, RECENT_TRANSFERS);
-  const tsMap = await batchBlockTimestamps(latestTransfers.map((t) => t.blockNumber));
+  // ── 10. Transfers with real block timestamps. `recentTransfers` (top 25,
+  // unchanged) feeds the existing "Recent transfers" panel; `allTransfers`
+  // exposes every transfer already scanned in step 2 — no second on-chain
+  // query — so HoodMap's per-wallet Transfers view can filter it down to
+  // one wallet instead of only ever seeing the top-25 sliver.
+  const sortedTransfers = [...transfers].sort(
+    (a, b) => Number(b.blockNumber - a.blockNumber) || b.logIndex - a.logIndex,
+  );
+  const tsMap = await batchBlockTimestamps(sortedTransfers.map((t) => t.blockNumber));
   const nowSec = Math.floor(Date.now() / 1000);
-  const recentTransfers: Transfer[] = latestTransfers.map((t) => {
+  const toDisplayTransfer = (t: RawTransfer): Transfer => {
     const ts = tsMap.get(t.blockNumber.toString());
     const ageSec = ts ? Math.max(0, nowSec - ts) : 0;
     const from = t.from.toLowerCase();
@@ -261,8 +273,11 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
       ageSeconds: ageSec,
       kind,
       blockNumber: Number(t.blockNumber),
+      logIndex: t.logIndex,
     };
-  });
+  };
+  const allTransfers: Transfer[] = sortedTransfers.map(toDisplayTransfer);
+  const recentTransfers: Transfer[] = allTransfers.slice(0, RECENT_TRANSFERS);
 
   // ── 11. Score + health + warnings + summary — all from observed facts
   const topWalletPct = rows[0]?.pct ?? 0;
@@ -363,6 +378,7 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
       pairAddress: Array.from(liquidityLike)[0],
     },
     transfers: recentTransfers,
+    allTransfers,
     graph: { nodes, edges },
     aiSummary,
     dataSources: {

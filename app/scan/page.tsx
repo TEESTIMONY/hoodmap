@@ -2,9 +2,10 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, ScanLine } from "lucide-react";
+import { ChevronDown, Search, ScanLine, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { TokenHeader } from "@/components/scan/TokenHeader";
 import { TokenChart } from "@/components/scan/TokenChart";
 import { ScoreCard } from "@/components/scan/ScoreCard";
@@ -13,7 +14,8 @@ import { HealthGrid } from "@/components/scan/HealthGrid";
 import { HolderDistribution } from "@/components/scan/HolderDistribution";
 import { WhaleTable } from "@/components/scan/WhaleTable";
 import { ClusterCards } from "@/components/scan/ClusterCards";
-import { WalletGraphView } from "@/components/scan/WalletGraphView";
+import { HoodMapView } from "@/components/scan/HoodMapView";
+import { BubbleLoader } from "@/components/scan/BubbleLoader";
 import { TransfersList } from "@/components/scan/TransfersList";
 import { SummaryFooter } from "@/components/scan/SummaryFooter";
 import { TopTokens } from "@/components/scan/TopTokens";
@@ -26,6 +28,17 @@ const STEPS: { key: ProgressStep; label: string }[] = [
   { key: "market", label: "Fetch market data" },
   { key: "rendering", label: "Compute intelligence" },
 ];
+
+function scanTabs(data: AnalysisResult): TabItem[] {
+  return [
+    { id: "overview", label: "Overview" },
+    { id: "chart", label: "Chart" },
+    { id: "map", label: "HoodMap", count: data.graph.nodes.length },
+    { id: "whales", label: "Whales", count: data.whales.length },
+    { id: "transactions", label: "Transactions", count: data.transfers.length },
+    { id: "summary", label: "Summary" },
+  ];
+}
 
 // Isolated so only THIS reads useSearchParams() — it needs a Suspense
 // boundary to be statically prerendered, and scoping that boundary to a
@@ -42,6 +55,8 @@ function AddressFromQuery({ onAddress }: { onAddress: (address: string) => void 
   return null;
 }
 
+type ScanTab = "overview" | "chart" | "map" | "whales" | "transactions" | "summary";
+
 export default function ScanPage() {
   const [address, setAddress] = useState("");
   const [progress, setProgress] = useState<ProgressStep | null>(null);
@@ -51,11 +66,18 @@ export default function ScanPage() {
     | { kind: "error"; message: string }
     | { kind: "ready"; data: AnalysisResult }
   >({ kind: "idle" });
+  const [tab, setTab] = useState<ScanTab>("overview");
+  // Open by default so first-time visitors still see trending tokens for
+  // discovery; collapses the moment a scan is run, since the results
+  // themselves are the focus at that point — reopen anytime via the toggle.
+  const [topTokensOpen, setTopTokensOpen] = useState(true);
   const ranFromQuery = useRef(false);
 
   async function runAnalysis(raw: string) {
     if (!raw.trim()) return;
     setState({ kind: "loading" });
+    setTab("overview");
+    setTopTokensOpen(false);
     setProgress("validating");
     try {
       const data = await analyzeToken(raw, (u) => setProgress(u.step));
@@ -129,7 +151,13 @@ export default function ScanPage() {
         </form>
 
         {state.kind === "loading" && (
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-6 flex flex-col items-center gap-4">
+            <BubbleLoader />
+          </div>
+        )}
+
+        {state.kind === "loading" && (
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
             {STEPS.map((step, i) => {
               const stepIndex = STEPS.findIndex((s) => s.key === progress);
               const done = stepIndex > i;
@@ -160,25 +188,73 @@ export default function ScanPage() {
 
         {state.kind === "ready" && (
           <div className="mt-6 flex flex-col gap-5">
+            {/* Always visible — context you need before you've even picked a
+                tab, not buried a click away. Everything else (chart, map,
+                whale/transaction tables, summary) used to stack endlessly
+                below this; it's now one section at a time via tabs. */}
             <TokenHeader token={state.data.token} />
-            <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
             <WarningsBanner warnings={state.data.warnings} />
             <ScoreCard score={state.data.hoodScore} />
-            <HealthGrid metrics={state.data.health} />
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-              <HolderDistribution buckets={state.data.holderDistribution} />
-              <ClusterCards groups={state.data.groups} />
+
+            <Tabs tabs={scanTabs(state.data)} active={tab} onChange={(id) => setTab(id as ScanTab)} />
+
+            <div className="animate-fade-up">
+              {tab === "overview" && (
+                <div className="flex flex-col gap-5">
+                  <HealthGrid metrics={state.data.health} />
+                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                    <HolderDistribution buckets={state.data.holderDistribution} />
+                    <ClusterCards groups={state.data.groups} />
+                  </div>
+                </div>
+              )}
+
+              {tab === "chart" && (
+                <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
+              )}
+
+              {tab === "map" && (
+                <HoodMapView
+                  nodes={state.data.graph.nodes}
+                  groups={state.data.groups}
+                  allTransfers={state.data.allTransfers}
+                  tokenPriceUsd={state.data.token.priceUsd}
+                  tokenSymbol={state.data.token.symbol}
+                />
+              )}
+
+              {tab === "whales" && <WhaleTable whales={state.data.whales} />}
+
+              {tab === "transactions" && <TransfersList transfers={state.data.transfers} />}
+
+              {tab === "summary" && (
+                <SummaryFooter aiSummary={state.data.aiSummary} dataSources={state.data.dataSources} />
+              )}
             </div>
-            <WhaleTable whales={state.data.whales} />
-            <WalletGraphView nodes={state.data.graph.nodes} edges={state.data.graph.edges} />
-            <TransfersList transfers={state.data.transfers} />
-            <SummaryFooter aiSummary={state.data.aiSummary} dataSources={state.data.dataSources} />
           </div>
         )}
       </div>
 
       <div className="mx-auto mt-10 max-w-[1800px]">
-        <TopTokens />
+        <button
+          type="button"
+          onClick={() => setTopTokensOpen((v) => !v)}
+          aria-expanded={topTokensOpen}
+          className="glass-panel flex w-full items-center justify-between rounded-lg px-4 py-3 text-left transition hover:border-line-strong"
+        >
+          <span className="flex items-center gap-2 text-sm font-medium text-ink">
+            <TrendingUp className="h-4 w-4 text-lime-soft" />
+            Top tokens on Robinhood Chain
+          </span>
+          <ChevronDown
+            className={`h-4 w-4 text-ink-faint transition-transform ${topTokensOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        {topTokensOpen && (
+          <div className="mt-3 animate-fade-up">
+            <TopTokens showHeader={false} viewAllHref="/tokens" />
+          </div>
+        )}
       </div>
     </div>
   );

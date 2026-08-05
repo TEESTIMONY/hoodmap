@@ -52,3 +52,14 @@ export function enforceTrendingRateLimit(): Promise<void> {
     "Too many trending-token requests from this IP. Please try again in a minute.",
   );
 }
+
+// Wallet scan reads a 500k-block window across every contract (two
+// topic-filtered sweeps), plus per-token metadata — heavier RPC volume than
+// a single-token scan, so it gets a tighter limit.
+export function enforceWalletScanRateLimit(): Promise<void> {
+  return enforceRateLimit(
+    "wallet-scan",
+    4,
+    "Too many wallet scans from this IP. Please try again in a minute.",
+  );
+}

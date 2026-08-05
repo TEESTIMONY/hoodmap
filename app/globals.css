@@ -124,6 +124,55 @@
   }
 }
 
+/* HoodMap bubbles: a one-time "pop" on arrival (own layer, see
+   components/scan/HoodMapView.tsx) plus a perpetual gentle wobble on a
+   separate layer, so the two transform animations don't fight over the
+   same property — each element owns exactly one. */
+@keyframes bubble-pop {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  65% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes bubble-idle {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  25% {
+    transform: translate3d(1.5px, -3px, 0);
+  }
+  50% {
+    transform: translate3d(-1.5px, -5px, 0);
+  }
+  75% {
+    transform: translate3d(-2px, -1.5px, 0);
+  }
+}
+
+/* Loading state (components/scan/BubbleLoader.tsx) — a much more obvious
+   bounce than bubble-idle above, on purpose: this has to read unmistakably
+   as "working," not as the same ambient settled motion the map uses once
+   it's done. */
+@keyframes bubble-loading-bounce {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-14px) scale(1.08);
+  }
+}
+
 html,
 body {
   height: 100%;

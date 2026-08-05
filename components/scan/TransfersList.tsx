@@ -22,7 +22,7 @@ export function TransfersList({ transfers }: { transfers: Transfer[] }) {
       ) : (
         <div className="flex max-h-[420px] flex-col divide-y divide-line overflow-y-auto pr-1">
           {transfers.map((t) => (
-            <div key={`${t.hash}-${t.blockNumber}`} className="flex flex-wrap items-center gap-2 py-2 text-xs first:pt-0 last:pb-0">
+            <div key={`${t.hash}-${t.logIndex}`} className="flex flex-wrap items-center gap-2 py-2 text-xs first:pt-0 last:pb-0">
               <span className={cn("rounded-full px-2 py-0.5 font-medium uppercase tracking-wide", KIND_STYLE[t.kind])}>
                 {t.kind}
               </span>

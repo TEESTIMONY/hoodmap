@@ -41,6 +41,12 @@ const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
 );
 
+// Wrapped-native quote token — the "priced against" side of nearly every
+// swap on Robinhood Chain. Shared by discovery (excluded from trending
+// ranking, since it dominates raw transfer counts) and wallet PnL
+// reconstruction (the reference asset trade prices are computed against).
+export const WETH_ADDRESS = "0x0bd7d308f8e1639fab988df18a8011f41eacad73" as const;
+
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 const DEAD_ADDRESSES = new Set([
   "0x0000000000000000000000000000000000000000",
@@ -85,6 +91,23 @@ export async function readTokenMetadata(address: string): Promise<TokenMetaOnCha
     totalSupplyRaw,
     totalSupply: Number(formatUnits(totalSupplyRaw, dec)),
   };
+}
+
+// Unlike readTokenMetadata (which swallows each field's RPC failure
+// independently, defaulting decimals to 18 — fine for display purposes),
+// this throws if either call fails. The wallet PnL engine divides by
+// decimals to compute every trade's price; a wrong assumed value there
+// doesn't fail visibly, it silently produces a plausible-looking but
+// incorrect number, which is worse than no number at all.
+export async function readTokenDecimalsAndSymbolStrict(
+  address: string,
+): Promise<{ symbol: string; decimals: number }> {
+  const token = getAddress(address);
+  const [symbol, decimals] = await Promise.all([
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+  ]);
+  return { symbol: String(symbol), decimals: Number(decimals) };
 }
 
 export async function getLatestBlockNumber(): Promise<bigint> {
@@ -158,6 +181,112 @@ export async function fetchTransferLogs(
     start = end + 1n;
   }
   return out;
+}
+
+export interface RawWalletTransfer extends RawTransfer {
+  token: Address;
+}
+
+// Unlike fetchTransferLogs (one contract, all holders), this scans ALL
+// contracts for Transfer events where the given wallet is sender or
+// receiver — there's no indexer for this chain, so "this wallet's full
+// history" means two topic-filtered (not address-filtered) eth_getLogs
+// sweeps across the requested block range. A single indexed-topic filter is
+// far sparser than discover.server.ts's fully unfiltered scan, so it can
+// afford much larger chunks.
+//
+// Measured live: at a 10k chunk / concurrency-6 pace (~1000 requests for a
+// 5M-block scan, fired back to back), 68-100% of fetches failed even with a
+// retry — two consecutive scans of the same wallet returned 224 transfers,
+// then 0. That's the public RPC pushing back on request *volume*, not
+// occasional flakiness a retry can paper over. Larger chunks (fewer total
+// requests) plus lower concurrency and a pacing delay between batches
+// (gentler load) address the actual cause instead of retrying into the
+// same wall.
+const WALLET_SCAN_CHUNK = 25_000n;
+const WALLET_SCAN_CONCURRENCY = 3;
+const WALLET_SCAN_BATCH_DELAY_MS = 250;
+
+export interface WalletTransferLogsResult {
+  transfers: RawWalletTransfer[];
+  truncated: boolean;
+  // Chunk/direction fetches that still failed after a retry — logs from
+  // that specific block range are missing, not just delayed. Distinct from
+  // `truncated` (which means the *maxLogs* cap was hit, not that fetching
+  // failed).
+  failedFetches: number;
+  totalFetches: number;
+}
+
+export async function fetchWalletTransferLogs(
+  wallet: string,
+  fromBlock: bigint,
+  toBlock: bigint,
+  maxLogs = 20_000,
+): Promise<WalletTransferLogsResult> {
+  const address = getAddress(wallet);
+  const chunkStarts: bigint[] = [];
+  for (let start = fromBlock; start <= toBlock; start += WALLET_SCAN_CHUNK) {
+    chunkStarts.push(start);
+  }
+
+  const out: RawWalletTransfer[] = [];
+  let truncated = false;
+  let failedFetches = 0;
+  let totalFetches = 0;
+
+  async function fetchDirection(start: bigint, end: bigint, direction: "from" | "to") {
+    totalFetches++;
+    const args = direction === "from" ? { from: address } : { to: address };
+    try {
+      return await publicClient.getLogs({ event: TRANSFER_EVENT, args, fromBlock: start, toBlock: end });
+    } catch {
+      // Retry once — this RPC has shown transient per-chunk failures under
+      // load; a single retry meaningfully reduces how often a real chunk of
+      // history silently comes back empty.
+      try {
+        return await publicClient.getLogs({ event: TRANSFER_EVENT, args, fromBlock: start, toBlock: end });
+      } catch {
+        failedFetches++;
+        return [] as Log[];
+      }
+    }
+  }
+
+  for (let i = 0; i < chunkStarts.length && !truncated; i += WALLET_SCAN_CONCURRENCY) {
+    if (i > 0) await new Promise((r) => setTimeout(r, WALLET_SCAN_BATCH_DELAY_MS));
+    const batch = chunkStarts.slice(i, i + WALLET_SCAN_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (start) => {
+        const end = start + WALLET_SCAN_CHUNK - 1n > toBlock ? toBlock : start + WALLET_SCAN_CHUNK - 1n;
+        const [outgoing, incoming] = await Promise.all([
+          fetchDirection(start, end, "from"),
+          fetchDirection(start, end, "to"),
+        ]);
+        return [...outgoing, ...incoming];
+      }),
+    );
+    for (const logs of results) {
+      for (const l of logs as (Log & { args?: { from: Address; to: Address; value: bigint } })[]) {
+        if (!l.args) continue;
+        out.push({
+          token: l.address,
+          from: l.args.from,
+          to: l.args.to,
+          valueRaw: l.args.value,
+          blockNumber: l.blockNumber ?? 0n,
+          txHash: l.transactionHash ?? "0x",
+          logIndex: l.logIndex ?? 0,
+        });
+        if (out.length >= maxLogs) {
+          truncated = true;
+          break;
+        }
+      }
+      if (truncated) break;
+    }
+  }
+  return { transfers: out, truncated, failedFetches, totalFetches };
 }
 
 export async function batchBalanceOf(

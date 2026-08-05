@@ -19,13 +19,14 @@ https://cloud.walletconnect.com and set:
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your-project-id
 ```
 
-Dev and build run on webpack (`next dev --webpack` / `next build --webpack`)
-rather than Turbopack — see the comment in `next.config.ts`: RainbowKit's
-default connector set transitively pulls in Coinbase's `@coinbase/cdp-sdk`,
-which lazy-loads optional `x402` payment-scheme packages that aren't
-published as installable dependencies. Turbopack doesn't yet expose an
-equivalent to webpack's `IgnorePlugin`, so the config falls back to webpack
-to stub that namespace out.
+Dev and build run on Turbopack (Next.js 16's default). RainbowKit's default
+connector set transitively pulls in Coinbase's `@coinbase/cdp-sdk`, which
+imports optional `x402` payment-scheme packages that aren't published as
+installable dependencies; cdp-sdk already guards each import with its own
+try/catch, but Turbopack still needs each specifier to resolve to *something*
+to build its chunk graph. `next.config.ts` aliases those specifiers to
+`shims/x402-empty.js`, a real empty local module — see the comment there for
+the full story, including a Windows-specific `resolveAlias` gotcha.
 
 ## Design decisions — the "why"
 

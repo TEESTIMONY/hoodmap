@@ -6,7 +6,7 @@
 // directly from logs instead of a database. Server-only.
 
 import { formatUnits, getAddress, parseAbiItem, type Address, type Log } from "viem";
-import { getLatestBlockNumber, publicClient, readTokenMetadata } from "./rpc.server";
+import { getLatestBlockNumber, publicClient, readTokenMetadata, WETH_ADDRESS } from "./rpc.server";
 
 const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -26,9 +26,7 @@ const LOG_FETCH_CONCURRENCY = 4;
 // Infrastructure tokens that dominate raw transfer counts (wrapped native,
 // stablecoins) but aren't "trending" in any meaningful sense — they're the
 // quote side of nearly every swap. Excluded from the ranking.
-const EXCLUDED_TOKENS = new Set<string>([
-  "0x0bd7d308f8e1639fab988df18a8011f41eacad73", // WETH
-]);
+const EXCLUDED_TOKENS = new Set<string>([WETH_ADDRESS]);
 
 export interface TrendingToken {
   address: string;
