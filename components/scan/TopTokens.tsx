@@ -6,8 +6,8 @@ import { ArrowDownRight, ArrowUpRight, Check, Copy, RefreshCw, TrendingUp } from
 import { Avatar } from "@/components/ui/Avatar";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { BubbleLoader } from "@/components/scan/BubbleLoader";
-import { discoverTrendingTokensServer } from "@/lib/scan/actions";
-import { fetchDexScreenerToken, type DexPairData } from "@/lib/scan/dexscreener";
+import { discoverTrendingTokensServer, fetchDexScreenerTokenServer } from "@/lib/scan/actions";
+import type { DexPairData } from "@/lib/scan/dexscreener";
 import type { TrendingToken } from "@/lib/scan/discover.server";
 import { shortNumber } from "@/lib/scan/adapter";
 import { formatCompactAge } from "@/lib/scan/format";
@@ -17,11 +17,10 @@ interface Row extends TrendingToken {
   dex: DexPairData | null;
 }
 
-// DexScreener enrichment is called directly from the browser, one request
-// per token (see the earlier "is this safe" note — no secrets involved,
-// just DexScreener's own public rate limits). Firing all of them in a
-// single Promise.all is fine at 20 tokens; at up to 100 it's worth
-// batching so a full-page load doesn't send 100 simultaneous requests.
+// DexScreener enrichment now goes through a server action (fetchDexScreenerTokenServer)
+// instead of the browser calling DexScreener directly — same per-token
+// batching as before, but now shared/cacheable server-side across every
+// visitor instead of every browser independently hitting DexScreener.
 const ENRICH_CONCURRENCY = 12;
 
 export function TopTokens({
@@ -62,7 +61,7 @@ export function TopTokens({
       for (let i = 0; i < tokens.length; i += ENRICH_CONCURRENCY) {
         const slice = tokens.slice(i, i + ENRICH_CONCURRENCY);
         const dexResults = await Promise.all(
-          slice.map((t) => fetchDexScreenerToken(t.address).catch(() => null)),
+          slice.map((t) => fetchDexScreenerTokenServer(t.address).catch(() => null)),
         );
         slice.forEach((t, idx) => enriched.push({ ...t, dex: dexResults[idx] }));
         setRows([...enriched, ...tokens.slice(i + ENRICH_CONCURRENCY).map((t) => ({ ...t, dex: null }))]);

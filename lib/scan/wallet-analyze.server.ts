@@ -17,6 +17,7 @@ import {
   type RawWalletTransfer,
 } from "./rpc.server";
 import { fetchDexScreenerToken } from "./dexscreener";
+import { cached } from "./cache.server";
 import { reconstructTrades, type WalletTransferLeg } from "./wallet-pnl";
 import type {
   ClosedTrade,
@@ -28,21 +29,49 @@ import type {
 } from "./wallet-types";
 
 // A wallet's full trading history typically spans far more blocks than "who
-// holds this token right now" (the token scanner's ~5,000 block window).
-// Scans always cover the full 5M-block budget — a wallet can have real
-// activity in the first 500k blocks and *substantially* more further back
-// (measured: one wallet had 55 transfers in 500k blocks but 481 within 5M),
-// so stopping the moment any activity is found undercounts real wallets
-// rather than just skipping genuinely-empty ones. 5M is a hard ceiling, not
-// a starting point to grow from — this chain is currently at ~27.8M blocks,
-// and a live probe at 15M blocks back returned unreliable results (the RPC
-// silently drops most of a query that large), so going further isn't
-// currently viable for a single request regardless of how badly it's
-// wanted. Fetched in tiers (rather than one 5M-block call) so a wallet
-// whose real history is small still returns as soon as fetching is done,
-// without changing what's ultimately scanned.
-const LOOKBACK_TIERS_BLOCKS = [500_000n, 2_000_000n, 5_000_000n] as const;
+// holds this token right now" (the token scanner's ~50,000 block window).
+// Scans always cover the full tier budget — a wallet can have real activity
+// in the first 500k blocks and *substantially* more further back (measured:
+// one wallet had 55 transfers in 500k blocks but 481 within 5M), so
+// stopping the moment any activity is found undercounts real wallets rather
+// than just skipping genuinely-empty ones. Fetched in tiers (rather than
+// one big call) so a wallet whose real history is small still returns as
+// soon as fetching is done, without changing what's ultimately scanned.
+//
+// The ceiling used to be 5,000,000 blocks — cut down here for the exact
+// reason SCAN_BLOCKS in analyze.server.ts got cut from 500,000 to 50,000:
+// that config was verified only in local vitest (no execution time limit)
+// and caused a real production 500 on /scan once it hit Vercel's actual
+// serverless timeout. This scanner was never confirmed safe under the same
+// constraint (only "measured 5+ minutes locally" was on record, which is
+// itself already past most serverless limits) — this is the same fix,
+// applied here before it causes the same incident rather than after.
+// 1,500,000 blocks (down from 5,000,000) plus the maxLogs cut below is a
+// first conservative step, to be re-tuned from real timing, not assumed.
+const LOOKBACK_TIERS_BLOCKS = [500_000n, 1_500_000n] as const;
 const METADATA_CONCURRENCY = 5;
+// Downstream per-transfer cost (decimals/symbol resolution per unique
+// token, block-timestamp batching per unique block) was the dominant cost
+// for the token scanner, not the raw log fetch — same shape of risk here,
+// but WORSE: the token scanner only ever resolves one token's metadata
+// (shared across every transfer), while a wallet scan resolves metadata
+// for every DISTINCT token the wallet has touched. Measured live against
+// the same real heavy-trader wallet at each step: 5,000 -> 239s, 1,500 ->
+// 97s, 500 -> 55s, 250 -> 21.6s. 250 is where this stopped: real margin
+// under even a conservative 60s serverless ceiling, not just "smaller than
+// before." Re-tune from fresh measurements if this ever needs to grow,
+// rather than assuming a bigger number is still safe.
+//
+// Residual, separate risk this cap does NOT fix: every one of the above
+// runs reported "4 of 6 block-range fetches failed even after a retry" for
+// this wallet — a reproducible, non-random RPC failure specific to
+// querying an address this active, not transient flakiness (it was
+// identical across five separate runs). Lowering this cap makes what DOES
+// come back process quickly and safely; it doesn't make the underlying
+// fetch reliable for extremely high-volume wallets. That's surfaced
+// honestly to the user via the existing failedFetches note below, not
+// silently hidden, but it's a real limitation worth knowing about.
+const MAX_WALLET_TRANSFER_LOGS = 250;
 
 export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSummary> {
   const wallet = getAddress(rawAddress);
@@ -55,20 +84,33 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
   let scannedFrom = latest + 1n; // nothing scanned yet
   let failedFetches = 0;
   let totalFetches = 0;
+  let truncated = false;
 
   for (const tierBlocks of LOOKBACK_TIERS_BLOCKS) {
     const tierFrom = latest > tierBlocks ? latest - tierBlocks : 0n;
     if (tierFrom >= scannedFrom) break;
-    const chunk = await fetchWalletTransferLogs(wallet, tierFrom, scannedFrom - 1n);
+    const chunk = await fetchWalletTransferLogs(
+      wallet,
+      tierFrom,
+      scannedFrom - 1n,
+      MAX_WALLET_TRANSFER_LOGS,
+    );
     rawTransfers = [...chunk.transfers, ...rawTransfers];
     failedFetches += chunk.failedFetches;
     totalFetches += chunk.totalFetches;
     scannedFrom = tierFrom;
+    if (chunk.truncated) {
+      // The cap was hit fetching this tier alone — escalating to a wider
+      // tier would just mean more of the same activity beyond the cap, not
+      // new information, so stop here instead of spending another full
+      // tier's worth of RPC time to find out the same thing.
+      truncated = true;
+      break;
+    }
     if (tierFrom === 0n) break;
   }
 
   const fromBlock = scannedFrom;
-  const truncated = rawTransfers.length >= 20_000;
 
   // Drop self-transfers (from === to === wallet) — not meaningful trade data.
   const relevant = rawTransfers.filter((t) => {
@@ -257,7 +299,11 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
     const realizedPnlQuote = tradesForQuote.reduce((s, t) => s + t.realizedPnlQuote, 0);
     let usdPrice: number | undefined;
     try {
-      const dex = await fetchDexScreenerToken(quoteAddr);
+      // Cached (see cache.server.ts) — quote assets are almost always
+      // WETH or one of a small set of recognized reference tokens, so this
+      // is one of the most-repeated DexScreener lookups in the app across
+      // different wallets' scans.
+      const dex = await cached(`dex:${quoteAddr.toLowerCase()}`, 30, () => fetchDexScreenerToken(quoteAddr));
       usdPrice = dex?.priceUsd;
     } catch {
       usdPrice = undefined;

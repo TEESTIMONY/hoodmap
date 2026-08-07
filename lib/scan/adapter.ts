@@ -3,8 +3,7 @@
 // price/liquidity/24h stats with DexScreener when available.
 
 import { getAddress } from "viem";
-import { analyzeTokenServer } from "./actions";
-import { fetchDexScreenerToken } from "./dexscreener";
+import { analyzeTokenServer, fetchDexScreenerTokenServer } from "./actions";
 import type { AnalysisResult } from "./types";
 
 export type ProgressStep = "validating" | "onchain" | "market" | "rendering" | "done";
@@ -36,7 +35,7 @@ export async function analyzeToken(
   const chainPromise = analyzeTokenServer(clean);
 
   onProgress?.({ step: "market", label: "Fetching market data from DexScreener" });
-  const dexPromise = fetchDexScreenerToken(clean).catch(() => null);
+  const dexPromise = fetchDexScreenerTokenServer(clean).catch(() => null);
 
   const [base, dex] = await Promise.all([chainPromise, dexPromise]);
 

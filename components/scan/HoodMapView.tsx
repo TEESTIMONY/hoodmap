@@ -491,6 +491,7 @@ export function HoodMapView({
           key={selected.id}
           wallet={selected}
           group={selectedGroup}
+          clusterColor={selected.group ? clusterColors.get(selected.group) : undefined}
           tokenPriceUsd={tokenPriceUsd}
           tokenSymbol={tokenSymbol}
           allTransfers={allTransfers}
