@@ -62,7 +62,11 @@ describe("indexer worker (real PGlite Postgres + real Robinhood Chain RPC)", () 
 
   beforeEach(async () => {
     db = await freshDb();
-  });
+    // Default 10s hook timeout is too tight when multiple test files spin
+    // up their own PGlite (WASM Postgres) instance concurrently — this is
+    // resource contention in the test run, not a real slowdown in the
+    // actual code under test.
+  }, 30_000);
 
   it("schema round-trips real data correctly (uint256-range value, idempotent insert)", async () => {
     // Sanity-checks the schema itself before trusting the worker logic
