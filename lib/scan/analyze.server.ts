@@ -8,7 +8,6 @@ import {
   batchBlockTimestamps,
   batchNativeBalance,
   estimateContractAgeSeconds,
-  fetchTransferLogs,
   getLatestBlockNumber,
   isBurnAddress,
   publicClient,
@@ -17,6 +16,7 @@ import {
   ZERO_ADDRESS,
   type RawTransfer,
 } from "./rpc.server";
+import { fetchTransferLogsHybrid } from "@/lib/indexer/hybrid-transfers";
 import type {
   AnalysisResult,
   AnalysisWarning,
@@ -79,8 +79,17 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   // run in seconds, with headroom, rather than assuming a bigger number is
   // safe without measuring it again.
   const MAX_TRANSFER_LOGS = 3_000;
-  const [transfers, ageSeconds] = await Promise.all([
-    fetchTransferLogs(address, fromBlock, latestBlock, MAX_TRANSFER_LOGS),
+  // fetchTransferLogsHybrid tries the indexed Postgres database first (real
+  // history, not bounded to SCAN_BLOCKS) plus a live-RPC "tail" for
+  // whatever's happened since the indexer's last sync, falling back to the
+  // exact previous live-RPC-only behavior whenever the DB has nothing for
+  // this token yet (not indexed, DATABASE_URL unset, or a DB error) — see
+  // lib/indexer/hybrid-transfers.ts for the full reasoning and live
+  // verification. This can only ever match or beat the old bounded-window
+  // result, never regress it: the tail fetch is capped to never exceed
+  // SCAN_BLOCKS of live-RPC work even if the indexer has fallen behind.
+  const [{ transfers, source: transferSource }, ageSeconds] = await Promise.all([
+    fetchTransferLogsHybrid(address, fromBlock, latestBlock, MAX_TRANSFER_LOGS),
     // Binary search over eth_getCode — O(log n) RPC calls, so matching the
     // wider transfer-log window costs barely more (a couple extra probes)
     // despite searching 5x further back.
@@ -455,14 +464,24 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
       holders: rows.length ? "partial" : "unavailable",
       walletGraph: transfers.length ? "live" : "unavailable",
       transfers: transfers.length ? "live" : "unavailable",
-      provider: "Robinhood Chain RPC",
+      provider: transferSource === "db+rpc-tail" ? "Robinhood Chain RPC + indexed history" : "Robinhood Chain RPC",
       rpcUrl: RPC_URL,
-      observationWindowBlocks: Number(SCAN_BLOCKS),
-      observationWindowFromBlock: Number(fromBlock),
+      // When the indexed database contributed, the transfers actually
+      // scanned can reach further back than the nominal SCAN_BLOCKS
+      // window — transfers[0] (ascending order) is the true oldest block
+      // reached, honest either way rather than always reporting the
+      // nominal window regardless of what was actually used.
+      observationWindowBlocks:
+        transferSource === "db+rpc-tail" && transfers.length > 0
+          ? Number(latestBlock - transfers[0].blockNumber)
+          : Number(SCAN_BLOCKS),
+      observationWindowFromBlock: transfers.length > 0 ? Number(transfers[0].blockNumber) : Number(fromBlock),
       observationWindowToBlock: Number(latestBlock),
       lastUpdated: now,
       notes: [
-        `Holder balances and clusters are derived from Transfer events in blocks ${fromBlock.toString()}–${latestBlock.toString()} plus current balanceOf reads.`,
+        transferSource === "db+rpc-tail"
+          ? `Holder balances and clusters are derived from Transfer events in blocks ${transfers[0]?.blockNumber.toString() ?? fromBlock.toString()}–${latestBlock.toString()} (indexed history plus live recent activity) plus current balanceOf reads.`
+          : `Holder balances and clusters are derived from Transfer events in blocks ${fromBlock.toString()}–${latestBlock.toString()} plus current balanceOf reads.`,
         "Balances are exact (balanceOf). Cluster detection observes only the scan window.",
       ],
     },
