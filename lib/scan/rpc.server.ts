@@ -24,9 +24,25 @@ const robinhoodChain = {
   rpcUrls: { default: { http: [RPC_URL] } },
 } as const;
 
+// batch: false — deliberately, not the default. Robinhood Chain's RPC node
+// cannot reliably handle viem's batched JSON-RPC requests: when several
+// concurrent calls land in the same tick (exactly what batchBalanceOf's
+// CONCURRENCY-based Promise.all does), viem's http({batch:true}) coalesces
+// them into ONE HTTP request carrying a JSON-RPC batch array. If that one
+// request fails, every call inside it fails together as a unit — not a
+// random subset. Confirmed live, directly: with batch:true, 100 real
+// balanceOf calls against a live holder set came back 0/100 succeeded;
+// the identical calls with batch:false came back 100/100 succeeded. This
+// is very likely the real explanation behind most of the "N wallet
+// balances couldn't be read (RPC instability)" warnings surfaced
+// throughout this app — not generic flakiness, a specific batching
+// incompatibility with this RPC node. The app already does its own
+// explicit concurrency control (CONCURRENCY constants throughout
+// rpc.server.ts) instead of relying on viem's batching for throughput, so
+// there's no efficiency this gives up — only the correlated-failure risk.
 export const publicClient = createPublicClient({
   chain: robinhoodChain,
-  transport: http(RPC_URL, { batch: true, retryCount: 1, timeout: 15_000 }),
+  transport: http(RPC_URL, { batch: false, retryCount: 1, timeout: 15_000 }),
 });
 
 const ERC20_ABI = parseAbi([
