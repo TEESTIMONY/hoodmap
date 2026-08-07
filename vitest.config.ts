@@ -14,5 +14,13 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["lib/**/__tests__/**/*.test.ts"],
+    // Multiple test files each spin up their own PGlite instance (real
+    // Postgres compiled to WASM) plus real network connections (RPC,
+    // Supabase) — running those in separate parallel worker processes hit
+    // a real crash in this environment (V8 fatal error / worker channel
+    // closed), not a code bug. Single fork trades some wall-clock time for
+    // not crashing.
+    pool: "forks",
+    poolOptions: { forks: { singleFork: true } },
   },
 });
