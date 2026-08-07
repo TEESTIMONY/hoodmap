@@ -1,0 +1,55 @@
+# Scheduled ingest sync — the free, no-new-account way to run the indexer
+# worker before/instead of paying for an always-on host (Render Starter,
+# Fly.io, etc.). Runs lib/indexer/run-once.ts on a schedule; each run picks
+# up exactly where the last one left off (progress is durable in Postgres'
+# sync_state table), so a missed or overlapping run is harmless.
+#
+# Setup required before this does anything:
+#   1. Add a repo secret named DATABASE_URL (Settings -> Secrets and
+#      variables -> Actions -> New repository secret) with your Supabase
+#      Postgres connection string.
+#   2. Run `npm run db:generate && npm run db:migrate` once (locally, with
+#      DATABASE_URL set) so the tables exist before this workflow's first run.
+#
+# To move to a continuous always-on worker later (e.g. Render Starter),
+# this workflow can simply be disabled/deleted — lib/indexer/run.ts (the
+# runForever entrypoint) is the equivalent for that host, no code changes
+# needed, same DATABASE_URL.
+name: Indexer sync
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub's actual minimum is 5 minutes, but schedule
+    # triggers can be delayed under platform load — 15 minutes leaves
+    # comfortable margin so a delayed run doesn't overlap awkwardly with
+    # the next one, while still keeping data far fresher than the
+    # previous "no persistence at all" baseline.
+    - cron: "*/15 * * * *"
+  # Lets you trigger a run manually from the Actions tab — useful for the
+  # very first run (backfill needs to start somewhere) and for testing.
+  workflow_dispatch:
+
+concurrency:
+  # Prevents two sync runs from overlapping if one runs long — not
+  # incorrect if they did (ingestion is idempotent), just wasted RPC/DB
+  # load for no benefit.
+  group: indexer-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npx tsx lib/indexer/run-once.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # ~8 minutes, leaving headroom inside the 10-minute job timeout
+          # above for checkout/npm ci/node startup.
+          INDEXER_TIME_BUDGET_MS: "480000"

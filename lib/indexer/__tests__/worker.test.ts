@@ -8,7 +8,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { sql as rawSql } from "drizzle-orm";
 import * as schema from "../schema";
-import { runSyncOnce, getSyncStatus, CHUNK_BLOCKS } from "../worker";
+import { runSyncOnce, runUntilCaughtUpOrBudget, getSyncStatus, CHUNK_BLOCKS } from "../worker";
 import { getLatestBlockNumber } from "@/lib/scan/rpc.server";
 import type { Db } from "../db";
 
@@ -175,4 +175,50 @@ describe("indexer worker (real PGlite Postgres + real Robinhood Chain RPC)", () 
     // the function didn't throw.
     expect(rowsAfterSecond.length).toBe(rowsAfterFirst.length);
   }, 60_000);
+
+  it("runUntilCaughtUpOrBudget (the GitHub Actions cron entrypoint's core logic) catches up and reports caughtUp:true", async () => {
+    const latest = await getLatestBlockNumber();
+    // Small starting gap (a few chunks worth) so this actually exercises
+    // "process several chunks, then hit the tip" rather than finishing on
+    // the very first call.
+    const startBlock = latest - CHUNK_BLOCKS * 3n - 5n;
+
+    const result = await runUntilCaughtUpOrBudget(db, startBlock, 60_000);
+    console.log("runUntilCaughtUpOrBudget result:", {
+      chunksProcessed: result.chunksProcessed,
+      rowsInserted: result.rowsInserted,
+      finalBlock: result.finalBlock?.toString(),
+      caughtUp: result.caughtUp,
+    });
+
+    expect(result.caughtUp).toBe(true);
+    expect(result.chunksProcessed).toBeGreaterThan(0);
+
+    const rows = await db.select().from(schema.transfers);
+    expect(rows.length).toBe(result.rowsInserted);
+
+    const status = await getSyncStatus(db);
+    expect(status.lastSyncedBlock).toBe(result.finalBlock);
+  }, 90_000);
+
+  it("runUntilCaughtUpOrBudget stops at the time budget when there's more work than fits", async () => {
+    const latest = await getLatestBlockNumber();
+    // A much wider gap than a tiny time budget can plausibly finish —
+    // forces the "budget reached, more work remains" exit path.
+    const startBlock = latest - CHUNK_BLOCKS * 200n;
+
+    const result = await runUntilCaughtUpOrBudget(db, startBlock, 3_000);
+    console.log("Budget-limited result:", {
+      chunksProcessed: result.chunksProcessed,
+      caughtUp: result.caughtUp,
+    });
+
+    expect(result.caughtUp).toBe(false);
+    // Progress made so far must still be durable — a future run picks up
+    // from here, nothing is lost by stopping early.
+    if (result.finalBlock != null) {
+      const status = await getSyncStatus(db);
+      expect(status.lastSyncedBlock).toBe(result.finalBlock);
+    }
+  }, 20_000);
 });

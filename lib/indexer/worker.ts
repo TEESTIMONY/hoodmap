@@ -145,6 +145,45 @@ export async function runForever(
   }
 }
 
+export interface RunOnceResult {
+  chunksProcessed: number;
+  rowsInserted: number;
+  finalBlock: bigint | null;
+  caughtUp: boolean;
+}
+
+// Batch variant of runForever — loops through chunks until either fully
+// caught up to the chain tip or `timeBudgetMs` is spent, then returns.
+// This is what a scheduled job (GitHub Actions cron, etc.) uses instead of
+// an always-on loop: same idempotent, resumable ingestion underneath, just
+// bounded to fit inside one invocation instead of running forever.
+export async function runUntilCaughtUpOrBudget(
+  db: Db,
+  startBlock: bigint,
+  timeBudgetMs: number,
+  opts: { onProgress?: (r: SyncResult) => void } = {},
+): Promise<RunOnceResult> {
+  const start = Date.now();
+  let chunksProcessed = 0;
+  let rowsInserted = 0;
+  let finalBlock: bigint | null = null;
+  let caughtUp = false;
+
+  while (Date.now() - start < timeBudgetMs) {
+    const result = await runSyncOnce(db, startBlock);
+    opts.onProgress?.(result);
+    if (!result.synced) {
+      caughtUp = true;
+      break;
+    }
+    chunksProcessed++;
+    rowsInserted += result.rowsInserted;
+    finalBlock = result.toBlock;
+  }
+
+  return { chunksProcessed, rowsInserted, finalBlock, caughtUp };
+}
+
 // Convenience helper to inspect current progress without running a sync —
 // used by the serving side to know how fresh/complete the data is.
 export async function getSyncStatus(db: Db): Promise<{ lastSyncedBlock: bigint | null; updatedAt: Date | null }> {
