@@ -10,6 +10,7 @@ import {
   text,
   bigint,
   integer,
+  boolean,
   timestamp,
   numeric,
   index,
@@ -157,5 +158,74 @@ export const holderBalances = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.tokenAddress, table.walletAddress] }),
+  ],
+);
+
+// Which wallets the wallet passport should keep a permanent activity log
+// for. A wallet is added here the first time anyone looks it up (see
+// lib/indexer/hybrid-wallet-transfers.ts) — same "someone cares about this"
+// signal as trackedTokens, deliberately NOT every address that's ever
+// touched a transfer (that's effectively every wallet on the chain, and
+// would reproduce the exact unbounded-storage incident that made the bulk
+// `transfers` table need pruning in the first place).
+//
+// trackedFromBlock anchors where incremental forward-capture (worker.ts,
+// alongside recordFirstFunders) started — everything from that block
+// onward is captured for free as the chain-wide ingest loop processes new
+// transfers anyway. backfillCursorBlock is how far the separate backward
+// backfill job (wallet-backfill.ts) has reached walking toward genesis;
+// null means not started yet. backfillComplete flips true once the cursor
+// reaches block 0 — at that point walletTransfers holds this wallet's
+// entire history, forever, with no pruning (this is the one deliberate
+// exception to this indexer's usual bounded-retention rule, made because
+// growth here is bounded by "wallets someone actually looked up," not by
+// chain-wide activity).
+export const trackedWallets = pgTable("tracked_wallets", {
+  walletAddress: text("wallet_address").primaryKey(),
+  firstTrackedAt: timestamp("first_tracked_at", { withTimezone: true }).defaultNow().notNull(),
+  trackedFromBlock: bigint("tracked_from_block", { mode: "bigint" }).notNull(),
+  backfillCursorBlock: bigint("backfill_cursor_block", { mode: "bigint" }),
+  backfillComplete: boolean("backfill_complete").default(false).notNull(),
+});
+
+// A tracked wallet's full cross-token transfer history — one row per
+// (wallet, transfer-leg), never pruned by block age (unlike `transfers`).
+// Populated two ways: worker.ts appends new activity as it's ingested
+// chain-wide (cheap, already-flowing data, covers trackedFromBlock
+// onward), and wallet-backfill.ts walks backward from trackedFromBlock to
+// genesis in the background (see trackedWallets above) to fill in
+// everything that happened before the wallet was tracked. Together these
+// two give "this wallet's entire history since its first-ever activity,"
+// which is what actually answers "full wallet history" — neither
+// mechanism alone does.
+//
+// Stored per-wallet-perspective (walletAddress is "whose passport is
+// this row for", counterparty is the other side) rather than reusing
+// `transfers`' from/to shape directly, so a query for one wallet's
+// passport never needs an OR-across-two-columns scan — same reasoning as
+// wallet_funders being keyed the way callers actually query it.
+export const walletTransfers = pgTable(
+  "wallet_transfers",
+  {
+    walletAddress: text("wallet_address").notNull(),
+    tokenAddress: text("token_address").notNull(),
+    counterparty: text("counterparty").notNull(),
+    direction: text("direction").notNull(), // 'in' | 'out'
+    valueRaw: numeric("value_raw", { precision: 78, scale: 0 }).notNull(),
+    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+    txHash: text("tx_hash").notNull(),
+    logIndex: integer("log_index").notNull(),
+    blockTimestamp: timestamp("block_timestamp", { withTimezone: true }),
+    insertedAt: timestamp("inserted_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    // A given log is relevant to a given wallet at most once — this is
+    // what makes both the incremental writer and the backfill job safe to
+    // re-run over overlapping ranges (ON CONFLICT DO NOTHING), same
+    // idempotency pattern as `transfers`' own unique index.
+    primaryKey({ columns: [table.walletAddress, table.txHash, table.logIndex] }),
+    // Answers "give me this wallet's full history in order" — the core
+    // query behind the wallet passport.
+    index("wallet_transfers_wallet_block_idx").on(table.walletAddress, table.blockNumber),
   ],
 );

@@ -6,7 +6,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { sql as rawSql } from "drizzle-orm";
 import * as schema from "../schema";
-import { runSyncOnce, runUntilCaughtUpOrBudget, getSyncStatus, CHUNK_BLOCKS } from "../worker";
+import {
+  runSyncOnce,
+  runUntilCaughtUpOrBudget,
+  getSyncStatus,
+  CHUNK_BLOCKS,
+  __resetTrackedWalletsCacheForTests,
+} from "../worker";
 import { getLatestBlockNumber } from "@/lib/scan/rpc.server";
 import { freshTestDb } from "./test-db";
 import type { Db } from "../db";
@@ -254,4 +260,70 @@ describe("indexer worker (real PGlite Postgres + real Robinhood Chain RPC)", () 
     }
     expect(first.synced).toBe(true);
   }, 60_000);
+
+  it("records permanent per-wallet activity only for tracked wallets, matching a hand computation from the same real transfers", async () => {
+    const latest = await getLatestBlockNumber();
+    const startBlock = latest - CHUNK_BLOCKS * 3n - 5n;
+
+    // First pass, untracked — establishes real transfer data to pick a
+    // real wallet from, and doubles as proof that walletTransfers stays
+    // empty for a batch with nothing tracked yet.
+    for (let i = 0; i < 3; i++) await runSyncOnce(db, startBlock);
+    const transferRows = await db.select().from(schema.transfers);
+    const untrackedActivity = await db.select().from(schema.walletTransfers);
+    expect(untrackedActivity).toHaveLength(0);
+    expect(transferRows.length).toBeGreaterThan(0);
+
+    const ZERO = "0x0000000000000000000000000000000000000000";
+    const candidate = transferRows.find((t) => t.fromAddress !== ZERO && t.toAddress !== ZERO);
+    if (!candidate) {
+      console.log("No non-mint transfer in this real sample — skipping the rest of this check.");
+      return;
+    }
+    // Whichever side has fewer total legs makes for a smaller, faster
+    // hand-computed cross-check below without changing what's being
+    // verified.
+    const wallet = candidate.toAddress;
+
+    await db.insert(schema.trackedWallets).values({ walletAddress: wallet, trackedFromBlock: startBlock });
+    __resetTrackedWalletsCacheForTests();
+
+    // Reset sync_state and reprocess the identical range now that the
+    // wallet is tracked — recordWalletActivity runs as part of the same
+    // ingest pass, so this is what actually populates walletTransfers.
+    await db.update(schema.syncState).set({ lastSyncedBlock: startBlock - 1n }).where(rawSql`id = 'global'`);
+    for (let i = 0; i < 3; i++) await runSyncOnce(db, startBlock);
+
+    const activity = await db.select().from(schema.walletTransfers);
+    console.log(`Tracked wallet ${wallet}: ${activity.length} activity row(s) recorded.`);
+    expect(activity.length).toBeGreaterThan(0);
+    expect(activity.every((r) => r.walletAddress === wallet)).toBe(true);
+
+    // Hand-compute this wallet's expected legs independently from the same
+    // real transfers and cross-check every recorded row against it.
+    const expectedLegs = transferRows.filter((t) => t.fromAddress === wallet || t.toAddress === wallet);
+    expect(activity.length).toBe(expectedLegs.length);
+    const byTxLog = new Map(expectedLegs.map((t) => [`${t.txHash}:${t.logIndex}`, t]));
+    for (const row of activity) {
+      const exp = byTxLog.get(`${row.txHash}:${row.logIndex}`);
+      expect(exp).toBeDefined();
+      expect(row.tokenAddress).toBe(exp!.tokenAddress);
+      expect(row.blockNumber).toBe(exp!.blockNumber);
+      if (exp!.fromAddress === wallet) {
+        expect(row.direction).toBe("out");
+        expect(row.counterparty).toBe(exp!.toAddress);
+      } else {
+        expect(row.direction).toBe("in");
+        expect(row.counterparty).toBe(exp!.fromAddress);
+      }
+    }
+    console.log(`Cross-checked ${activity.length} activity row(s) against hand computation — all matched.`);
+
+    // Idempotency: reprocessing the exact same already-tracked range again
+    // must not duplicate rows.
+    await db.update(schema.syncState).set({ lastSyncedBlock: startBlock - 1n }).where(rawSql`id = 'global'`);
+    for (let i = 0; i < 3; i++) await runSyncOnce(db, startBlock);
+    const activityAfterRerun = await db.select().from(schema.walletTransfers);
+    expect(activityAfterRerun.length).toBe(activity.length);
+  }, 90_000);
 });

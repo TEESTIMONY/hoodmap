@@ -5,10 +5,16 @@
 # window — the unfiltered chain-wide scan grows without bound otherwise;
 # this already exceeded Supabase's free-tier storage quota once and flipped
 # the database read-only mid-sync), then lib/indexer/snapshot-once.ts
-# (balance/metadata snapshot for tracked tokens) on a schedule; each run
-# picks up exactly where the last one left off (progress is durable in
-# Postgres — sync_state for the transfer sync, tracked_tokens.last_snapshot_at
-# for the balance snapshot), so a missed or overlapping run is harmless.
+# (balance/metadata snapshot for tracked tokens), then
+# lib/indexer/backfill-wallets-once.ts (walks tracked wallets' history
+# backward toward genesis — see wallet-backfill.ts; this table is
+# deliberately NOT subject to the same pruning as `transfers`, since a
+# wallet's full history is the whole point of the wallet passport) on a
+# schedule; each run picks up exactly where the last one left off (progress
+# is durable in Postgres — sync_state for the transfer sync,
+# tracked_tokens.last_snapshot_at for the balance snapshot,
+# tracked_wallets.backfill_cursor_block for the wallet backfill), so a
+# missed or overlapping run is harmless.
 #
 # Setup required before this does anything:
 #   1. Add a repo secret named DATABASE_URL (Settings -> Secrets and
@@ -45,10 +51,10 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Bumped 10 -> 16 -> 18 minutes to fit the prune step alongside the
-    # existing sync/snapshot steps, each bounded by its own time budget
-    # below, plus headroom for checkout/npm ci/node startup.
-    timeout-minutes: 18
+    # Bumped 10 -> 16 -> 18 -> 22 minutes to fit the wallet-backfill step
+    # alongside the existing sync/prune/snapshot steps, each bounded by its
+    # own time budget below, plus headroom for checkout/npm ci/node startup.
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,7 +94,19 @@ jobs:
       - run: npx tsx lib/indexer/snapshot-once.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # ~5 minutes, leaving headroom inside the 18-minute job timeout
-          # above alongside the sync/prune steps and checkout/npm ci/node
-          # startup.
+          # ~5 minutes, leaving headroom inside the 22-minute job timeout
+          # above alongside the sync/prune/wallet-backfill steps and
+          # checkout/npm ci/node startup.
           SNAPSHOT_TIME_BUDGET_MS: "300000"
+      # Walks each tracked wallet's history backward toward genesis (see
+      # lib/indexer/wallet-backfill.ts). Runs last: it depends on
+      # tracked_wallets rows that a scan this very run's sync step didn't
+      # create (those come from hybrid-wallet-transfers.ts, triggered by an
+      # actual wallet-passport page view, not by this workflow) — ordering
+      # relative to sync/prune/snapshot doesn't matter for correctness, this
+      # position just leaves it last since it's the newest, least-proven
+      # step.
+      - run: npx tsx lib/indexer/backfill-wallets-once.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          WALLET_BACKFILL_TIME_BUDGET_MS: "180000"

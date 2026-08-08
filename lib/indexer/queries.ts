@@ -5,7 +5,15 @@
 // so the migration itself is a small, low-risk swap once real data exists,
 // not something written and tested for the first time under pressure.
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
-import { transfers, walletFunders, trackedTokens, holderBalances, tokenMetadataCache } from "./schema";
+import {
+  transfers,
+  walletFunders,
+  trackedTokens,
+  holderBalances,
+  tokenMetadataCache,
+  trackedWallets,
+  walletTransfers,
+} from "./schema";
 import type { Db } from "./db";
 
 export interface TokenTransferRow {
@@ -252,6 +260,78 @@ export async function upsertHolderBalances(
       target: [holderBalances.tokenAddress, holderBalances.walletAddress],
       set: { balanceRaw: sql`excluded.balance_raw`, updatedAt: sql`excluded.updated_at` },
     });
+}
+
+// ─── wallet passport (full, permanent per-wallet history) ──────────────────
+// See lib/indexer/hybrid-wallet-transfers.ts (read side) and
+// lib/indexer/wallet-backfill.ts (background backfill) for how these get
+// used together. Distinct from getWalletTransfers above, which reads the
+// bulk `transfers` table — bounded by prune.ts's ~20-hour retention. This
+// reads walletTransfers instead: a permanent, never-pruned log kept only
+// for wallets someone has actually looked up (see trackedWallets in
+// schema.ts for why "only tracked wallets," not every address that's ever
+// moved a token).
+
+// Registers a wallet for the background backfill job to walk backward from.
+// onConflictDoNothing — a wallet only needs to be registered once;
+// trackedFromBlock is the anchor forward-capture (worker.ts) started from,
+// and must never move once set, or backward backfill and forward capture
+// could both skip the blocks in between.
+export async function trackWallet(db: Db, walletAddress: string, trackedFromBlock: bigint): Promise<void> {
+  await db
+    .insert(trackedWallets)
+    .values({ walletAddress: walletAddress.toLowerCase(), trackedFromBlock })
+    .onConflictDoNothing();
+}
+
+export interface TrackedWalletStatus {
+  trackedFromBlock: bigint;
+  backfillCursorBlock: bigint | null;
+  backfillComplete: boolean;
+}
+
+// Lets a caller (hybrid-wallet-transfers.ts) report honestly how complete
+// this wallet's stored history is — "since genesis" only once
+// backfillComplete is true; otherwise "since block N" (backfillCursorBlock,
+// or trackedFromBlock if backfill hasn't started yet), never silently
+// presented as more complete than it actually is.
+export async function getTrackedWalletStatus(db: Db, walletAddress: string): Promise<TrackedWalletStatus | null> {
+  const rows = await db
+    .select({
+      trackedFromBlock: trackedWallets.trackedFromBlock,
+      backfillCursorBlock: trackedWallets.backfillCursorBlock,
+      backfillComplete: trackedWallets.backfillComplete,
+    })
+    .from(trackedWallets)
+    .where(eq(trackedWallets.walletAddress, walletAddress.toLowerCase()));
+  return rows[0] ?? null;
+}
+
+export interface WalletActivityRow {
+  tokenAddress: string;
+  counterparty: string;
+  direction: "in" | "out";
+  valueRaw: string;
+  blockNumber: bigint;
+  txHash: string;
+  logIndex: number;
+}
+
+export async function getTrackedWalletTransfers(db: Db, walletAddress: string): Promise<WalletActivityRow[]> {
+  const rows = await db
+    .select({
+      tokenAddress: walletTransfers.tokenAddress,
+      counterparty: walletTransfers.counterparty,
+      direction: walletTransfers.direction,
+      valueRaw: walletTransfers.valueRaw,
+      blockNumber: walletTransfers.blockNumber,
+      txHash: walletTransfers.txHash,
+      logIndex: walletTransfers.logIndex,
+    })
+    .from(walletTransfers)
+    .where(eq(walletTransfers.walletAddress, walletAddress.toLowerCase()))
+    .orderBy(desc(walletTransfers.blockNumber));
+  return rows as WalletActivityRow[];
 }
 
 export interface CachedTokenMetadata {

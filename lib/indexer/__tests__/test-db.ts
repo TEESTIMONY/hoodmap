@@ -70,6 +70,29 @@ export const TEST_DDL = `
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (token_address, wallet_address)
   );
+
+  CREATE TABLE tracked_wallets (
+    wallet_address TEXT PRIMARY KEY,
+    first_tracked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    tracked_from_block BIGINT NOT NULL,
+    backfill_cursor_block BIGINT,
+    backfill_complete BOOLEAN NOT NULL DEFAULT false
+  );
+
+  CREATE TABLE wallet_transfers (
+    wallet_address TEXT NOT NULL,
+    token_address TEXT NOT NULL,
+    counterparty TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    value_raw NUMERIC(78, 0) NOT NULL,
+    block_number BIGINT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    log_index INTEGER NOT NULL,
+    block_timestamp TIMESTAMPTZ,
+    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (wallet_address, tx_hash, log_index)
+  );
+  CREATE INDEX wallet_transfers_wallet_block_idx ON wallet_transfers (wallet_address, block_number);
 `;
 
 export async function freshTestDb(): Promise<Db> {

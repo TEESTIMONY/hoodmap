@@ -18,7 +18,7 @@
 import { parseAbiItem, type Log } from "viem";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db";
-import { transfers, syncState, walletFunders } from "./schema";
+import { transfers, syncState, walletFunders, trackedWallets, walletTransfers } from "./schema";
 import { publicClient, getLatestBlockNumber, ZERO_ADDRESS } from "@/lib/scan/rpc.server";
 
 const TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
@@ -144,6 +144,7 @@ export async function runSyncOnce(db: Db, startBlock: bigint): Promise<SyncResul
     // already made it in, rather than erroring or duplicating.
     await db.insert(transfers).values(rows).onConflictDoNothing();
     await recordFirstFunders(db, rows);
+    await recordWalletActivity(db, rows);
   }
 
   await setLastSyncedBlock(db, toBlock);
@@ -157,6 +158,86 @@ type TransferRow = {
   blockNumber: bigint;
   logIndex: number;
 };
+
+type IngestedTransferRow = TransferRow & {
+  valueRaw: string;
+  txHash: string;
+};
+
+// Which wallets the wallet passport is keeping a permanent activity log
+// for (see trackedWallets/walletTransfers in schema.ts). Cached briefly for
+// the same reason getCachedLatestBlock is — a fast catch-up loop calls this
+// once per chunk, and a wallet tracked mid-run doesn't need to be captured
+// starting from THIS exact chunk (the backfill job covers whatever gap that
+// leaves); re-querying every single chunk would just be wasted DB load.
+let cachedTrackedWallets: { set: Set<string>; fetchedAt: number } | null = null;
+const TRACKED_WALLETS_CACHE_MS = 60_000;
+
+async function getCachedTrackedWallets(db: Db): Promise<Set<string>> {
+  const now = Date.now();
+  if (cachedTrackedWallets && now - cachedTrackedWallets.fetchedAt < TRACKED_WALLETS_CACHE_MS) {
+    return cachedTrackedWallets.set;
+  }
+  const rows = await db.select({ walletAddress: trackedWallets.walletAddress }).from(trackedWallets);
+  const set = new Set(rows.map((r) => r.walletAddress));
+  cachedTrackedWallets = { set, fetchedAt: now };
+  return set;
+}
+
+// Test-only escape hatch: this cache is a module-level singleton (shared
+// across every test in the same vitest process, same reasoning as
+// getCachedLatestBlock), so a test that tracks a wallet mid-run needs a way
+// to force the next recordWalletActivity call to see it immediately rather
+// than depending on TRACKED_WALLETS_CACHE_MS happening to have elapsed.
+export function __resetTrackedWalletsCacheForTests(): void {
+  cachedTrackedWallets = null;
+}
+
+// Maintains walletTransfers incrementally: any transfer in this batch that
+// touches a tracked wallet (as either side) gets appended to that wallet's
+// permanent activity log, from BOTH perspectives when both sides happen to
+// be tracked. This is the "forward" half of full wallet history — cheap,
+// since it rides on data the chain-wide ingest loop is already fetching
+// anyway. The "backward" half (everything before a wallet was tracked) is
+// wallet-backfill.ts's job, not this function's.
+async function recordWalletActivity(db: Db, rows: IngestedTransferRow[]): Promise<void> {
+  const tracked = await getCachedTrackedWallets(db);
+  if (tracked.size === 0) return;
+
+  const legs: (typeof walletTransfers.$inferInsert)[] = [];
+  for (const r of rows) {
+    if (tracked.has(r.fromAddress)) {
+      legs.push({
+        walletAddress: r.fromAddress,
+        tokenAddress: r.tokenAddress,
+        counterparty: r.toAddress,
+        direction: "out",
+        valueRaw: r.valueRaw,
+        blockNumber: r.blockNumber,
+        txHash: r.txHash,
+        logIndex: r.logIndex,
+      });
+    }
+    if (tracked.has(r.toAddress)) {
+      legs.push({
+        walletAddress: r.toAddress,
+        tokenAddress: r.tokenAddress,
+        counterparty: r.fromAddress,
+        direction: "in",
+        valueRaw: r.valueRaw,
+        blockNumber: r.blockNumber,
+        txHash: r.txHash,
+        logIndex: r.logIndex,
+      });
+    }
+  }
+  if (legs.length === 0) return;
+
+  // ON CONFLICT DO NOTHING against (walletAddress, txHash, logIndex) is
+  // what makes this idempotent across re-runs/overlapping chunks, same
+  // pattern as every other table this worker writes.
+  await db.insert(walletTransfers).values(legs).onConflictDoNothing();
+}
 
 // Maintains wallet_funders incrementally: for every (token, wallet) this
 // batch is the FIRST time we've ever seen a wallet receive that token, the

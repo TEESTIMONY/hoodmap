@@ -17,6 +17,7 @@ import {
   type RawWalletTransfer,
 } from "./rpc.server";
 import { fetchDexScreenerToken } from "./dexscreener";
+import { resolveWalletTransfersHybrid } from "@/lib/indexer/hybrid-wallet-transfers";
 import { cached } from "./cache.server";
 import { reconstructTrades, type WalletTransferLeg } from "./wallet-pnl";
 import type {
@@ -80,10 +81,26 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
 
   const latest = await getLatestBlockNumber();
 
-  let rawTransfers: RawWalletTransfer[] = [];
-  let scannedFrom = latest + 1n; // nothing scanned yet
-  let failedFetches = 0;
-  let totalFetches = 0;
+  // Tries the indexed database first — a permanent, never-pruned per-wallet
+  // history built specifically for the wallet passport (see
+  // lib/indexer/hybrid-wallet-transfers.ts), not bounded by this file's own
+  // tiered-scan caps. Auto-tracks the wallet as a side effect so a
+  // never-before-seen wallet starts accumulating real history in the
+  // background from this point on, even though THIS request still needs
+  // the live tiered scan below to have anything to show at all.
+  const hybrid = await resolveWalletTransfersHybrid(wallet);
+
+  let rawTransfers: RawWalletTransfer[] = [...hybrid.transfers];
+  // db-full: the DB already covers this wallet's entire history back to
+  // genesis (dbCoverageFromBlock = 0n) — scannedFrom starts there, so the
+  // tiered loop below finds tierFrom >= scannedFrom immediately and does
+  // zero live RPC work. db-partial: scannedFrom starts wherever the DB's
+  // guaranteed-complete coverage begins, so the loop only fetches blocks
+  // OLDER than that — pure top-up, never redoing what the DB already has.
+  // rpc-only: unchanged from before this feature existed.
+  let scannedFrom = hybrid.dbCoverageFromBlock ?? latest + 1n;
+  let failedFetches = hybrid.failedFetches;
+  let totalFetches = hybrid.totalFetches;
   let truncated = false;
 
   for (const tierBlocks of LOOKBACK_TIERS_BLOCKS) {
@@ -111,6 +128,26 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
   }
 
   const fromBlock = scannedFrom;
+
+  // Deduplicate by (txHash, logIndex) — normally the DB portion and the
+  // live top-up loop cover strictly disjoint block ranges (the loop only
+  // ever fetches below dbCoverageFromBlock), but a backfill window that
+  // partially failed can leave a few real rows in the DB below its own
+  // recorded cursor (see wallet-backfill.ts: whatever came back before a
+  // failure is still stored, even though the cursor didn't advance past
+  // it) — those blocks then also get covered again by this scan's own live
+  // top-up. Keeping the DB-sourced copy over the live one when both exist
+  // is arbitrary (they describe the same on-chain event either way); this
+  // only exists to guarantee no transfer is double-counted downstream.
+  {
+    const seen = new Set<string>();
+    rawTransfers = rawTransfers.filter((t) => {
+      const key = `${t.txHash}:${t.logIndex}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
 
   // Drop self-transfers (from === to === wallet) — not meaningful trade data.
   const relevant = rawTransfers.filter((t) => {
@@ -326,6 +363,19 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
       ? `Prices are derived from paired swap legs against a reference asset within the same transaction, auto-detected from this wallet's own trading pattern (${quoteSymbols.join(", ")}) — accurate at trade time. USD totals use each reference asset's current rate, not its historical rate at each trade.`
       : "No trades in this scan window paired against a recognizable reference asset, so nothing could be priced.",
   ];
+  if (hybrid.source === "db-full") {
+    notes.push(
+      "This wallet's full transaction history, back to its very first on-chain activity, is indexed and included — not limited to a recent scan window.",
+    );
+  } else if (hybrid.source === "db-partial") {
+    notes.push(
+      `This wallet's activity is indexed back to block ${hybrid.dbCoverageFromBlock!.toLocaleString()} onward permanently; a background job is still working backward toward this wallet's genesis activity and will extend this automatically. History before that block in this result comes from a live scan, same as before this wallet was tracked.`,
+    );
+  } else {
+    notes.push(
+      "This is this wallet's first lookup — it's now being indexed for permanent, full history on future scans. This result is from a live scan only.",
+    );
+  }
   if (relevant.length === 0) {
     const hitGenesis = fromBlock === 0n;
     notes.push(
