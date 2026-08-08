@@ -17,6 +17,8 @@ import {
   type RawTransfer,
 } from "./rpc.server";
 import { fetchTransferLogsHybrid } from "@/lib/indexer/hybrid-transfers";
+import { detectWalletClustersHybrid } from "@/lib/indexer/hybrid-clusters";
+import { short, type ClusterRow } from "./clusters";
 import type {
   AnalysisResult,
   AnalysisWarning,
@@ -48,12 +50,6 @@ const SCAN_BLOCKS = 50_000n;
 const HOLDERS_TO_RESOLVE = 100;
 // Latest N transfers to show in the recent-transfers panel.
 const RECENT_TRANSFERS = 25;
-
-export interface ClusterRow {
-  addr: string;
-  pct: number;
-  role: WalletRole;
-}
 
 export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResult> {
   const address = getAddress(rawAddress);
@@ -239,7 +235,19 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
     const key = from < to ? `${from}|${to}` : `${to}|${from}`;
     edgeCount.set(key, (edgeCount.get(key) ?? 0) + 1);
   }
-  const topGroups = detectWalletClusters(transfers, excluded, rows, deployer, SCAN_BLOCKS);
+  // Tries the indexed database's full history first (via wallet_funders,
+  // maintained incrementally by the ingest worker — see
+  // lib/indexer/hybrid-clusters.ts), falling back to the unmodified live
+  // detectWalletClusters (capped to this scan's transfer window) whenever
+  // the DB has nothing for this token yet.
+  const { groups: topGroups, source: clusterSource } = await detectWalletClustersHybrid(
+    address,
+    transfers,
+    excluded,
+    rows,
+    deployer,
+    SCAN_BLOCKS,
+  );
 
   // ── 8. Wallet graph nodes/edges for the visualization — up to top 100
   // holders for HoodMap (bounded by HOLDERS_TO_RESOLVE above, since a row
@@ -482,7 +490,9 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
         transferSource === "db+rpc-tail"
           ? `Holder balances and clusters are derived from Transfer events in blocks ${transfers[0]?.blockNumber.toString() ?? fromBlock.toString()}–${latestBlock.toString()} (indexed history plus live recent activity) plus current balanceOf reads.`
           : `Holder balances and clusters are derived from Transfer events in blocks ${fromBlock.toString()}–${latestBlock.toString()} plus current balanceOf reads.`,
-        "Balances are exact (balanceOf). Cluster detection observes only the scan window.",
+        clusterSource === "db"
+          ? "Balances are exact (balanceOf). Cluster detection uses the indexed database's full history for this token, not just the current scan window."
+          : "Balances are exact (balanceOf). Cluster detection observes only the scan window.",
       ],
     },
     whales,
@@ -532,57 +542,6 @@ function labelsFor(
   return out;
 }
 
-function short(addr: string): string {
-  return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
-}
-
-export function detectWalletClusters(
-  transfers: RawTransfer[],
-  excluded: ReadonlySet<string>,
-  rows: ClusterRow[],
-  deployer?: string,
-  scanBlocks = SCAN_BLOCKS,
-): WalletGroup[] {
-  const funders = new Map<string, string>();
-  for (const transfer of [...transfers].sort((a, b) => Number(a.blockNumber - b.blockNumber))) {
-    const from = transfer.from.toLowerCase();
-    const to = transfer.to.toLowerCase();
-    if (excluded.has(from) || excluded.has(to)) continue;
-    if (!funders.has(to) && from !== ZERO_ADDRESS) funders.set(to, from);
-  }
-
-  const byFunder = new Map<string, string[]>();
-  for (const [wallet, funder] of funders) {
-    const wallets = byFunder.get(funder) ?? [];
-    wallets.push(wallet);
-    byFunder.set(funder, wallets);
-  }
-
-  const pctByWallet = new Map(rows.map((row) => [row.addr.toLowerCase(), row.pct]));
-  const groups: WalletGroup[] = [];
-  for (const [funder, wallets] of byFunder) {
-    if (wallets.length < 2) continue;
-    const clusterWallets = [funder, ...wallets];
-    const pctSupply = clusterWallets.reduce(
-      (sum, wallet) => sum + (pctByWallet.get(wallet) ?? 0),
-      0,
-    );
-    const isDev = deployer?.toLowerCase() === funder;
-    groups.push({
-      id: `g-${groups.length}`,
-      label: isDev ? "Developer-funded cluster" : `Co-funded cluster · ${short(funder)}`,
-      wallets: clusterWallets,
-      pctSupply: +pctSupply.toFixed(2),
-      risk: pctSupply > 15 ? "high" : pctSupply > 6 ? "medium" : "low",
-      note: isDev
-        ? "Wallets funded directly by the deployer during the observation window."
-        : `Wallets that share a common funding source (${short(funder)}) within the observation window.`,
-      reason: `${wallets.length} wallets received their first observed inbound transfer from ${short(funder)} inside the last ${scanBlocks.toString()} blocks.`,
-    });
-  }
-
-  return groups.sort((a, b) => b.pctSupply - a.pctSupply).slice(0, 8);
-}
 
 export interface ScoreInput {
   topWalletPct: number;

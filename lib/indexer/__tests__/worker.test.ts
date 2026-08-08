@@ -4,64 +4,18 @@
 // No DATABASE_URL / external Postgres needed to run this — that's the
 // point of injecting `db` into worker.ts instead of importing a singleton.
 import { describe, it, expect, beforeEach } from "vitest";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
 import { sql as rawSql } from "drizzle-orm";
 import * as schema from "../schema";
 import { runSyncOnce, runUntilCaughtUpOrBudget, getSyncStatus, CHUNK_BLOCKS } from "../worker";
 import { getLatestBlockNumber } from "@/lib/scan/rpc.server";
+import { freshTestDb } from "./test-db";
 import type { Db } from "../db";
-
-// Mirrors schema.ts exactly — drizzle-kit's migration generation targets a
-// real Postgres server, which isn't available in this test environment;
-// DDL is applied directly here instead so PGlite has the same shape.
-const DDL = `
-  CREATE TABLE transfers (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    token_address TEXT NOT NULL,
-    from_address TEXT NOT NULL,
-    to_address TEXT NOT NULL,
-    value_raw NUMERIC(78, 0) NOT NULL,
-    block_number BIGINT NOT NULL,
-    tx_hash TEXT NOT NULL,
-    log_index INTEGER NOT NULL,
-    block_timestamp TIMESTAMPTZ,
-    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-  CREATE UNIQUE INDEX transfers_tx_log_idx ON transfers (tx_hash, log_index);
-  CREATE INDEX transfers_token_block_idx ON transfers (token_address, block_number);
-  CREATE INDEX transfers_from_idx ON transfers (from_address);
-  CREATE INDEX transfers_to_idx ON transfers (to_address);
-  CREATE INDEX transfers_block_idx ON transfers (block_number);
-
-  CREATE TABLE sync_state (
-    id TEXT PRIMARY KEY,
-    last_synced_block BIGINT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-
-  CREATE TABLE token_metadata_cache (
-    address TEXT PRIMARY KEY,
-    name TEXT,
-    symbol TEXT,
-    decimals INTEGER,
-    total_supply_raw NUMERIC(78, 0),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-`;
-
-async function freshDb(): Promise<Db> {
-  const client = new PGlite();
-  const db = drizzle(client, { schema }) as unknown as Db;
-  await client.exec(DDL);
-  return db;
-}
 
 describe("indexer worker (real PGlite Postgres + real Robinhood Chain RPC)", () => {
   let db: Db;
 
   beforeEach(async () => {
-    db = await freshDb();
+    db = await freshTestDb();
     // Default 10s hook timeout is too tight when multiple test files spin
     // up their own PGlite (WASM Postgres) instance concurrently — this is
     // resource contention in the test run, not a real slowdown in the
@@ -221,4 +175,83 @@ describe("indexer worker (real PGlite Postgres + real Robinhood Chain RPC)", () 
       expect(status.lastSyncedBlock).toBe(result.finalBlock);
     }
   }, 20_000);
+
+  it("records each wallet's first funder correctly, matching a hand computation from the same real transfers", async () => {
+    const latest = await getLatestBlockNumber();
+    const startBlock = latest - CHUNK_BLOCKS * 3n - 5n;
+    for (let i = 0; i < 3; i++) {
+      await runSyncOnce(db, startBlock);
+    }
+
+    const transferRows = await db.select().from(schema.transfers);
+    const funderRows = await db.select().from(schema.walletFunders);
+    console.log(`Ingested ${transferRows.length} transfers, recorded ${funderRows.length} funder relationships.`);
+    expect(funderRows.length).toBeGreaterThan(0);
+
+    // Hand-compute "first sender per (token, wallet)" independently, the
+    // same way recordFirstFunders is supposed to, and cross-check every
+    // recorded row against it — not just that funder rows exist, but that
+    // they're the RIGHT ones.
+    const sorted = [...transferRows].sort((a, b) =>
+      a.blockNumber !== b.blockNumber
+        ? a.blockNumber < b.blockNumber
+          ? -1
+          : 1
+        : a.logIndex - b.logIndex,
+    );
+    const ZERO = "0x0000000000000000000000000000000000000000";
+    const expected = new Map<string, { funder: string; block: bigint }>();
+    for (const t of sorted) {
+      if (t.fromAddress === ZERO) continue;
+      const key = `${t.tokenAddress}:${t.toAddress}`;
+      if (expected.has(key)) continue;
+      expected.set(key, { funder: t.fromAddress, block: t.blockNumber });
+    }
+
+    let checked = 0;
+    for (const row of funderRows) {
+      const key = `${row.tokenAddress}:${row.walletAddress}`;
+      const exp = expected.get(key);
+      expect(exp).toBeDefined();
+      expect(row.funderAddress).toBe(exp!.funder);
+      expect(row.firstFundedBlock).toBe(exp!.block);
+      checked++;
+    }
+    console.log(`Cross-checked ${checked} funder relationships against hand computation — all matched.`);
+    expect(checked).toBe(funderRows.length);
+
+    // No mint-as-funder rows — the exact exclusion recordFirstFunders and
+    // the live detectWalletClusters both apply.
+    expect(funderRows.every((r) => r.funderAddress !== ZERO)).toBe(true);
+  }, 60_000);
+
+  it("re-running an overlapping range does not overwrite an already-recorded funder with a later sender", async () => {
+    const latest = await getLatestBlockNumber();
+    const startBlock = latest - CHUNK_BLOCKS - 5n;
+
+    const first = await runSyncOnce(db, startBlock);
+    const funderRowsAfterFirst = await db.select().from(schema.walletFunders);
+
+    // Reset sync_state to force a genuine re-processing of the exact same
+    // range (not just a cache hit) — this is the actual idempotency
+    // property under test: an already-recorded funder must survive a
+    // reprocess unchanged, not get clobbered by whatever this second pass
+    // happens to see as "the first" sender in its own local ordering.
+    await db
+      .update(schema.syncState)
+      .set({ lastSyncedBlock: startBlock - 1n })
+      .where(rawSql`id = 'global'`);
+    await runSyncOnce(db, startBlock);
+    const funderRowsAfterSecond = await db.select().from(schema.walletFunders);
+
+    console.log(
+      `Funder rows after first pass: ${funderRowsAfterFirst.length}, after re-processing the same range: ${funderRowsAfterSecond.length}.`,
+    );
+    expect(funderRowsAfterSecond.length).toBe(funderRowsAfterFirst.length);
+    const byKey = new Map(funderRowsAfterFirst.map((r) => [`${r.tokenAddress}:${r.walletAddress}`, r.funderAddress]));
+    for (const row of funderRowsAfterSecond) {
+      expect(row.funderAddress).toBe(byKey.get(`${row.tokenAddress}:${row.walletAddress}`));
+    }
+    expect(first.synced).toBe(true);
+  }, 60_000);
 });

@@ -18,8 +18,8 @@
 import { parseAbiItem, type Log } from "viem";
 import { eq } from "drizzle-orm";
 import type { Db } from "./db";
-import { transfers, syncState } from "./schema";
-import { publicClient, getLatestBlockNumber } from "@/lib/scan/rpc.server";
+import { transfers, syncState, walletFunders } from "./schema";
+import { publicClient, getLatestBlockNumber, ZERO_ADDRESS } from "@/lib/scan/rpc.server";
 
 const TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
@@ -119,10 +119,58 @@ export async function runSyncOnce(db: Db, startBlock: bigint): Promise<SyncResul
     // chunk boundary, or a retried batch all just no-op on rows that
     // already made it in, rather than erroring or duplicating.
     await db.insert(transfers).values(rows).onConflictDoNothing();
+    await recordFirstFunders(db, rows);
   }
 
   await setLastSyncedBlock(db, toBlock);
   return { synced: true, fromBlock, toBlock, rowsInserted: rows.length };
+}
+
+type TransferRow = {
+  tokenAddress: string;
+  fromAddress: string;
+  toAddress: string;
+  blockNumber: bigint;
+  logIndex: number;
+};
+
+// Maintains wallet_funders incrementally: for every (token, wallet) this
+// batch is the FIRST time we've ever seen a wallet receive that token, the
+// sender becomes that wallet's recorded funder. A mint (from the zero
+// address) doesn't count as a funding relationship — matches
+// analyze.server.ts's live detectWalletClusters, which excludes it the
+// same way.
+async function recordFirstFunders(db: Db, rows: TransferRow[]): Promise<void> {
+  // Ascending (block, logIndex) so that when the SAME (token, wallet) pair
+  // receives multiple transfers within this one batch, the candidate kept
+  // is genuinely the earliest — not whatever order the RPC/concatenated
+  // halved-retry chunks happened to return.
+  const sorted = [...rows].sort((a, b) =>
+    a.blockNumber !== b.blockNumber ? (a.blockNumber < b.blockNumber ? -1 : 1) : a.logIndex - b.logIndex,
+  );
+
+  const seenInBatch = new Set<string>();
+  const candidates: { tokenAddress: string; walletAddress: string; funderAddress: string; firstFundedBlock: bigint }[] =
+    [];
+  for (const r of sorted) {
+    if (r.fromAddress === ZERO_ADDRESS) continue;
+    const key = `${r.tokenAddress}:${r.toAddress}`;
+    if (seenInBatch.has(key)) continue;
+    seenInBatch.add(key);
+    candidates.push({
+      tokenAddress: r.tokenAddress,
+      walletAddress: r.toAddress,
+      funderAddress: r.fromAddress,
+      firstFundedBlock: r.blockNumber,
+    });
+  }
+  if (candidates.length === 0) return;
+
+  // ON CONFLICT DO NOTHING against the (token, wallet) primary key is what
+  // makes "first funder ever" correct across batches, not just within one:
+  // if an earlier chunk already recorded this wallet's funder, this
+  // no-ops rather than overwriting it with a later (wrong) sender.
+  await db.insert(walletFunders).values(candidates).onConflictDoNothing();
 }
 
 export async function runForever(

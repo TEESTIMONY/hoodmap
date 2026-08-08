@@ -5,7 +5,17 @@
 // what's already been read. This table is that store: once a transfer is
 // ingested here, it's queryable instantly and forever, independent of how
 // unreliable or slow the RPC is at query time.
-import { pgTable, text, bigint, integer, timestamp, numeric, index, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  bigint,
+  integer,
+  timestamp,
+  numeric,
+  index,
+  uniqueIndex,
+  primaryKey,
+} from "drizzle-orm/pg-core";
 
 // One row per Transfer log, chain-wide (every ERC20 contract, not just
 // tokens we already know about) — this is what lets discovery/trending
@@ -63,6 +73,38 @@ export const syncState = pgTable("sync_state", {
   lastSyncedBlock: bigint("last_synced_block", { mode: "bigint" }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Who funded whom, first — one row per (token, wallet) recording that
+// wallet's FIRST observed inbound transfer of that specific token, and who
+// sent it. This is what lets cluster detection ("co-funded" wallets) run
+// against the database's full indexed history instead of the live
+// scanner's capped MAX_TRANSFER_LOGS window — a wallet's first funder for
+// a token, once observed, never changes, so this only ever needs writing
+// once per (token, wallet), making it cheap to maintain incrementally as
+// the ingest worker processes new transfers.
+//
+// Deliberately simple at write time: records the raw first-sender, with no
+// attempt to classify it as a liquidity pool / router here (that
+// classification needs aggregate in/out flow context the streaming
+// per-transfer ingest doesn't have cheaply available). That filtering
+// happens at query time instead (see getWalletFunderClusters), matching
+// where analyze.server.ts's live detectWalletClusters already does it.
+export const walletFunders = pgTable(
+  "wallet_funders",
+  {
+    tokenAddress: text("token_address").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    funderAddress: text("funder_address").notNull(),
+    firstFundedBlock: bigint("first_funded_block", { mode: "bigint" }).notNull(),
+    insertedAt: timestamp("inserted_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tokenAddress, table.walletAddress] }),
+    // Answers "who did this funder fund" — the core query behind
+    // full-history cluster detection (GROUP BY funder_address).
+    index("wallet_funders_token_funder_idx").on(table.tokenAddress, table.funderAddress),
+  ],
+);
 
 // Cached token metadata (name/symbol/decimals/totalSupply) — these never
 // change post-deploy (decimals/name/symbol) or change rarely (totalSupply,

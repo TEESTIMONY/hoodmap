@@ -5,47 +5,12 @@
 // catches "the query runs without erroring but returns the wrong thing,"
 // which a query that merely doesn't throw would not.
 import { describe, it, expect, beforeAll } from "vitest";
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
 import * as schema from "../schema";
 import { runSyncOnce, CHUNK_BLOCKS } from "../worker";
-import { getTokenTransfers, getWalletTransfers, getTrendingTokens } from "../queries";
+import { getTokenTransfers, getWalletTransfers, getTrendingTokens, getFunderGroups } from "../queries";
 import { getLatestBlockNumber } from "@/lib/scan/rpc.server";
+import { freshTestDb } from "./test-db";
 import type { Db } from "../db";
-
-const DDL = `
-  CREATE TABLE transfers (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    token_address TEXT NOT NULL,
-    from_address TEXT NOT NULL,
-    to_address TEXT NOT NULL,
-    value_raw NUMERIC(78, 0) NOT NULL,
-    block_number BIGINT NOT NULL,
-    tx_hash TEXT NOT NULL,
-    log_index INTEGER NOT NULL,
-    block_timestamp TIMESTAMPTZ,
-    inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-  CREATE UNIQUE INDEX transfers_tx_log_idx ON transfers (tx_hash, log_index);
-  CREATE INDEX transfers_token_block_idx ON transfers (token_address, block_number);
-  CREATE INDEX transfers_from_idx ON transfers (from_address);
-  CREATE INDEX transfers_to_idx ON transfers (to_address);
-  CREATE INDEX transfers_block_idx ON transfers (block_number);
-
-  CREATE TABLE sync_state (
-    id TEXT PRIMARY KEY,
-    last_synced_block BIGINT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-  CREATE TABLE token_metadata_cache (
-    address TEXT PRIMARY KEY,
-    name TEXT,
-    symbol TEXT,
-    decimals INTEGER,
-    total_supply_raw NUMERIC(78, 0),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-`;
 
 describe("indexer query layer (real ingested chain data, cross-checked by hand)", () => {
   let db: Db;
@@ -53,9 +18,7 @@ describe("indexer query layer (real ingested chain data, cross-checked by hand)"
   let startBlock: bigint;
 
   beforeAll(async () => {
-    const client = new PGlite();
-    db = drizzle(client, { schema }) as unknown as Db;
-    await client.exec(DDL);
+    db = await freshTestDb();
 
     const latest = await getLatestBlockNumber();
     // Ingest 3 real chunks (150 blocks) so there's enough data for the
@@ -129,5 +92,53 @@ describe("indexer query layer (real ingested chain data, cross-checked by hand)"
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].tokenAddress).toBe(expectedTop[0]);
     expect(rows[0].uniqueTraders).toBe(expectedTop[1]);
+  });
+
+  it("getFunderGroups matches a hand-built grouping of the same ingested funder relationships", async () => {
+    const funderRows = await db.select().from(schema.walletFunders);
+    console.log(`${funderRows.length} funder relationships recorded during ingestion.`);
+
+    // Hand-build the same grouping getFunderGroups is supposed to produce.
+    const byFunder = new Map<string, { tokenAddress: string; members: Set<string>; earliest: bigint }[]>();
+    for (const r of funderRows) {
+      const list = byFunder.get(r.funderAddress) ?? [];
+      let entry = list.find((e) => e.tokenAddress === r.tokenAddress);
+      if (!entry) {
+        entry = { tokenAddress: r.tokenAddress, members: new Set(), earliest: r.firstFundedBlock };
+        list.push(entry);
+      }
+      entry.members.add(r.walletAddress);
+      if (r.firstFundedBlock < entry.earliest) entry.earliest = r.firstFundedBlock;
+      byFunder.set(r.funderAddress, list);
+    }
+
+    // Pick a real (token, funder) pair that actually has 2+ members —
+    // guarantees a non-trivial case rather than hardcoding an address that
+    // might not appear in this run's live data.
+    let picked: { tokenAddress: string; funderAddress: string; expectedMembers: Set<string>; expectedEarliest: bigint } | null =
+      null;
+    for (const [funderAddress, entries] of byFunder) {
+      for (const e of entries) {
+        if (e.members.size >= 2) {
+          picked = { tokenAddress: e.tokenAddress, funderAddress, expectedMembers: e.members, expectedEarliest: e.earliest };
+          break;
+        }
+      }
+      if (picked) break;
+    }
+
+    if (!picked) {
+      console.log("No funder in this run's live data funded 2+ wallets for the same token — skipping assertion, nothing to compare.");
+      return;
+    }
+
+    const groups = await getFunderGroups(db, picked.tokenAddress);
+    const match = groups.find((g) => g.funderAddress === picked!.funderAddress);
+    console.log(
+      `Checking funder ${picked.funderAddress} on token ${picked.tokenAddress}: expected ${picked.expectedMembers.size} members, got ${match?.members.length ?? "NOT FOUND"}.`,
+    );
+    expect(match).toBeDefined();
+    expect(new Set(match!.members)).toEqual(picked.expectedMembers);
+    expect(match!.earliestFundedBlock).toBe(picked.expectedEarliest);
   });
 });

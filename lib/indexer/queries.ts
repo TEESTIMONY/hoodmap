@@ -5,7 +5,7 @@
 // so the migration itself is a small, low-risk swap once real data exists,
 // not something written and tested for the first time under pressure.
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
-import { transfers } from "./schema";
+import { transfers, walletFunders } from "./schema";
 import type { Db } from "./db";
 
 export interface TokenTransferRow {
@@ -123,4 +123,52 @@ export async function getTrendingTokens(db: Db, sinceBlock: bigint, limit = 50):
   // under both without the caller needing to know which driver is active.
   const rows = Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? []);
   return rows as TrendingRow[];
+}
+
+export interface FunderGroup {
+  funderAddress: string;
+  // Wallets this funder funded (excludes the funder itself) — matches
+  // WalletGroup's `[funder, ...wallets]` convention at the call site, not
+  // stored that way here.
+  members: string[];
+  earliestFundedBlock: bigint;
+}
+
+// Replaces analyze.server.ts's live detectWalletClusters for the "which
+// wallets share a funder" question — grouped from wallet_funders, which
+// the worker maintains across ALL indexed history, not just whatever fits
+// in the live scanner's MAX_TRANSFER_LOGS cap. This is why cluster
+// detection can genuinely improve from the indexer in a way holder
+// balances can't (yet) — funding relationships don't need a "starting
+// balance," they just need to have seen the transfer, so there's no
+// partial-backfill correctness trap here the way there is for balances.
+//
+// Deliberately does NOT apply the live version's liquidity-pool/burn
+// exclusion here — that needs aggregate in/out flow context this table
+// doesn't carry. Callers (analyze.server.ts) already compute that
+// classification for the token's resolved holder set and should filter
+// this function's output the same way, rather than this function
+// guessing at it with an incomplete picture.
+export async function getFunderGroups(db: Db, tokenAddress: string): Promise<FunderGroup[]> {
+  const rows = await db
+    .select({
+      funderAddress: walletFunders.funderAddress,
+      walletAddress: walletFunders.walletAddress,
+      firstFundedBlock: walletFunders.firstFundedBlock,
+    })
+    .from(walletFunders)
+    .where(eq(walletFunders.tokenAddress, tokenAddress.toLowerCase()));
+
+  const byFunder = new Map<string, { members: string[]; earliest: bigint }>();
+  for (const r of rows) {
+    const entry = byFunder.get(r.funderAddress) ?? { members: [], earliest: r.firstFundedBlock };
+    entry.members.push(r.walletAddress);
+    if (r.firstFundedBlock < entry.earliest) entry.earliest = r.firstFundedBlock;
+    byFunder.set(r.funderAddress, entry);
+  }
+
+  return Array.from(byFunder.entries())
+    .filter(([, v]) => v.members.length >= 2) // a "cluster" needs at least 2 funded wallets
+    .map(([funderAddress, v]) => ({ funderAddress, members: v.members, earliestFundedBlock: v.earliest }))
+    .sort((a, b) => b.members.length - a.members.length);
 }
