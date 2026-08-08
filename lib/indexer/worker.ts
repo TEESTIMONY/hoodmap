@@ -84,8 +84,32 @@ export interface SyncResult {
   rowsInserted: number;
 }
 
+// A fast catch-up loop calls runSyncOnce once per 50-block chunk — for a
+// backlog spanning thousands of blocks that's hundreds of eth_blockNumber
+// calls in a couple of minutes, on top of the eth_getLogs call each chunk
+// already needs. Confirmed live: this combined volume triggered Robinhood
+// Chain's public RPC rate limit ("Rate Limit Hit, limit will reset in 60
+// seconds") partway through a real backfill run. The chain's own latest
+// block genuinely doesn't change meaningfully within a few seconds (~2s
+// block time), and SAFETY_LAG_BLOCKS already tolerates more slop than
+// this cache window — so reusing a several-second-old "latest" instead of
+// re-fetching it every single chunk is free accuracy-wise and cuts a large
+// fraction of this loop's RPC call volume.
+let cachedLatest: { block: bigint; fetchedAt: number } | null = null;
+const LATEST_BLOCK_CACHE_MS = 5_000;
+
+async function getCachedLatestBlock(): Promise<bigint> {
+  const now = Date.now();
+  if (cachedLatest && now - cachedLatest.fetchedAt < LATEST_BLOCK_CACHE_MS) {
+    return cachedLatest.block;
+  }
+  const block = await getLatestBlockNumber();
+  cachedLatest = { block, fetchedAt: now };
+  return block;
+}
+
 export async function runSyncOnce(db: Db, startBlock: bigint): Promise<SyncResult> {
-  const latest = await getLatestBlockNumber();
+  const latest = await getCachedLatestBlock();
   const safeLatest = latest > SAFETY_LAG_BLOCKS ? latest - SAFETY_LAG_BLOCKS : 0n;
   const lastSynced = await getLastSyncedBlock(db, startBlock);
   const fromBlock = lastSynced + 1n;
@@ -200,6 +224,14 @@ export interface RunOnceResult {
   caughtUp: boolean;
 }
 
+// Small pause between successful chunks during a fast catch-up loop — same
+// "avoid triggering RPC pushback from request volume" reasoning already
+// applied to fetchWalletTransferLogs' WALLET_SCAN_BATCH_DELAY_MS. Cheap
+// relative to a single chunk's own network round trip, meaningful at the
+// scale of hundreds of chunks back to back with no pacing at all (what
+// actually triggered the rate limit live).
+const CATCHUP_PACING_MS = 150;
+
 // Batch variant of runForever — loops through chunks until either fully
 // caught up to the chain tip or `timeBudgetMs` is spent, then returns.
 // This is what a scheduled job (GitHub Actions cron, etc.) uses instead of
@@ -209,7 +241,7 @@ export async function runUntilCaughtUpOrBudget(
   db: Db,
   startBlock: bigint,
   timeBudgetMs: number,
-  opts: { onProgress?: (r: SyncResult) => void } = {},
+  opts: { onProgress?: (r: SyncResult) => void; onError?: (err: unknown) => void } = {},
 ): Promise<RunOnceResult> {
   const start = Date.now();
   let chunksProcessed = 0;
@@ -218,7 +250,19 @@ export async function runUntilCaughtUpOrBudget(
   let caughtUp = false;
 
   while (Date.now() - start < timeBudgetMs) {
-    const result = await runSyncOnce(db, startBlock);
+    let result: SyncResult;
+    try {
+      result = await runSyncOnce(db, startBlock);
+    } catch (err) {
+      // A transient RPC failure (rate limit, node hiccup) must not crash
+      // the whole batch and lose whatever time budget remains — back off
+      // and let the loop retry, the same resilience runForever already
+      // has for its own always-on loop. Whatever progress was already made
+      // this run is durable in sync_state regardless of this failing.
+      opts.onError?.(err);
+      await new Promise((r) => setTimeout(r, 3_000));
+      continue;
+    }
     opts.onProgress?.(result);
     if (!result.synced) {
       caughtUp = true;
@@ -227,6 +271,7 @@ export async function runUntilCaughtUpOrBudget(
     chunksProcessed++;
     rowsInserted += result.rowsInserted;
     finalBlock = result.toBlock;
+    await new Promise((r) => setTimeout(r, CATCHUP_PACING_MS));
   }
 
   return { chunksProcessed, rowsInserted, finalBlock, caughtUp };

@@ -26,6 +26,14 @@ runUntilCaughtUpOrBudget(db(), startBlock, timeBudgetMs, {
   onProgress: (r) => {
     if (r.synced) console.log(`[indexer] blocks ${r.fromBlock}-${r.toBlock}: ${r.rowsInserted} rows`);
   },
+  // Transient RPC failures (rate limits, node hiccups) no longer crash this
+  // process — runUntilCaughtUpOrBudget backs off and retries internally,
+  // same resilience runForever already had. Logged here for visibility,
+  // not re-thrown: progress already made this run is durable regardless,
+  // and the next scheduled run picks up from there.
+  onError: (err) => {
+    console.warn("[indexer] transient sync error, backing off and retrying:", err instanceof Error ? err.message : err);
+  },
 })
   .then((result) => {
     console.log(
