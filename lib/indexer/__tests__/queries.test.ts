@@ -103,15 +103,22 @@ describe("indexer query layer (real ingested chain data, cross-checked by hand)"
 
   it("getTrendingTokens ranks tokens by unique-trader count, matching a hand computation", async () => {
     const tradersByToken = new Map<string, Set<string>>();
+    const transferCountByToken = new Map<string, number>();
     for (const r of allRows) {
       const set = tradersByToken.get(r.tokenAddress) ?? new Set<string>();
       set.add(r.fromAddress);
       set.add(r.toAddress);
       tradersByToken.set(r.tokenAddress, set);
+      transferCountByToken.set(r.tokenAddress, (transferCountByToken.get(r.tokenAddress) ?? 0) + 1);
     }
+    // Same tie-break as the SQL query itself (unique traders, then transfer
+    // count, then address ascending) — without matching it exactly, a real
+    // tie makes this comparison flaky depending on which real chain data
+    // happened to be ingested for this run. Confirmed live: this exact
+    // scenario occurred in a real test run before the tie-break was added.
     const expectedTop = Array.from(tradersByToken.entries())
-      .map(([addr, set]) => [addr, set.size] as const)
-      .sort((a, b) => b[1] - a[1])[0];
+      .map(([addr, set]) => [addr, set.size, transferCountByToken.get(addr) ?? 0] as const)
+      .sort((a, b) => b[1] - a[1] || b[2] - a[2] || a[0].localeCompare(b[0]))[0];
     console.log(`Hand-computed top token by unique traders: ${expectedTop[0]} (${expectedTop[1]} traders)`);
 
     const rows = await getTrendingTokens(db, startBlock, 10);

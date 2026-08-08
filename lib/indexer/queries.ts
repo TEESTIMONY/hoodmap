@@ -109,7 +109,11 @@ export async function getTrendingTokens(db: Db, sinceBlock: bigint, limit = 50):
       select token_address, to_address as addr from ${transfers} where block_number >= ${sinceBlock}
     ) t
     group by token_address
-    order by count(distinct addr) desc
+    -- Deterministic tie-break (transfer count, then address) — without one,
+    -- a tie on unique-trader count leaves ordering up to whatever order
+    -- Postgres happens to produce, which isn't guaranteed stable across
+    -- runs. Confirmed live: this exact tie surfaced in a real test run.
+    order by count(distinct addr) desc, count(*) desc, token_address asc
     limit ${limit}
   `);
   // The postgres-js driver (production) and the PGlite driver (tests) wrap

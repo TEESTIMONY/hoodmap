@@ -44,7 +44,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          # Pinned to match the npm major version (11.x, bundled with
+          # Node 24) that package-lock.json was actually generated and
+          # validated against locally. Node 22's bundled npm (10.x) failed
+          # `npm ci` against this exact, otherwise-valid lockfile with a
+          # "Missing: zod@... from lock file" error — confirmed live: the
+          # identical lockfile content passes cleanly under npm 11 and
+          # fails under whatever ships with Node 22. This is an npm
+          # version behavior difference in lockfileVersion 3 validation,
+          # not a real lockfile problem.
+          node-version: "24"
           cache: "npm"
       - run: npm ci
       - run: npx tsx lib/indexer/run-once.ts
