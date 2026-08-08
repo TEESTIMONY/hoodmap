@@ -4,21 +4,22 @@
 
 import { formatUnits, getAddress } from "viem";
 import {
-  batchBalanceOf,
   batchBlockTimestamps,
   batchNativeBalance,
   estimateContractAgeSeconds,
   getLatestBlockNumber,
   isBurnAddress,
   publicClient,
-  readTokenMetadata,
   RPC_URL,
   ZERO_ADDRESS,
   type RawTransfer,
 } from "./rpc.server";
 import { fetchTransferLogsHybrid } from "@/lib/indexer/hybrid-transfers";
 import { detectWalletClustersHybrid } from "@/lib/indexer/hybrid-clusters";
+import { resolveBalancesHybrid } from "@/lib/indexer/hybrid-balances";
+import { resolveMetadataHybrid } from "@/lib/indexer/hybrid-metadata";
 import { short, type ClusterRow } from "./clusters";
+import { selectCandidateHolders } from "./candidates";
 import type {
   AnalysisResult,
   AnalysisWarning,
@@ -57,8 +58,13 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   const warnings: AnalysisWarning[] = [];
 
   // ── 1. Metadata + head block, in parallel
-  const [meta, latestBlock] = await Promise.all([
-    readTokenMetadata(address),
+  // resolveMetadataHybrid reads a cached row (see lib/indexer/snapshot.ts,
+  // the background job that maintains it) when one exists, live otherwise —
+  // metadata rarely changes post-deploy, so a cached row is used as-is with
+  // no extra freshness check. Falls back to the exact previous live-only
+  // behavior whenever DATABASE_URL is unset or the DB errors.
+  const [{ meta, source: metaSource }, latestBlock] = await Promise.all([
+    resolveMetadataHybrid(address),
     getLatestBlockNumber(),
   ]);
 
@@ -110,25 +116,22 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
   }
 
   // ── 3. Pick candidate holders by activity, resolve real balances
-  const activity = new Map<string, number>();
-  for (const t of transfers) {
-    const from = t.from.toLowerCase();
-    const to = t.to.toLowerCase();
-    if (from !== ZERO_ADDRESS) activity.set(from, (activity.get(from) ?? 0) + 1);
-    if (to !== ZERO_ADDRESS) activity.set(to, (activity.get(to) ?? 0) + 1);
-  }
-  const candidates = Array.from(activity.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, HOLDERS_TO_RESOLVE)
-    .map(([addr]) => addr);
+  const { candidates, activity, deployer } = selectCandidateHolders(transfers, HOLDERS_TO_RESOLVE);
 
-  // Always include the deployer heuristic + zero + dead
-  const deployer = guessDeployer(transfers);
-  if (deployer && !candidates.includes(deployer)) candidates.push(deployer);
-
-  const { balances, failed: balanceFetchFailed } = candidates.length
-    ? await batchBalanceOf(address, candidates)
-    : { balances: new Map<string, bigint>(), failed: [] as string[] };
+  // resolveBalancesHybrid reads whatever the background snapshot job (see
+  // lib/indexer/snapshot.ts) already has for this token, live RPC only for
+  // whichever candidates it doesn't cover — see that module's comment for
+  // why this carries none of the correctness risk balance materialization
+  // from summed transfer deltas would have (every value here, DB or live,
+  // came from a real balanceOf call, just possibly up to one snapshot cycle
+  // stale). Also auto-registers the token for future snapshots.
+  const {
+    balances,
+    failed: balanceFetchFailed,
+    source: balanceSource,
+  } = candidates.length
+    ? await resolveBalancesHybrid(address, candidates)
+    : { balances: new Map<string, bigint>(), failed: [] as string[], source: "rpc-only" as const };
   // A candidate whose balance couldn't be resolved even after retry must NOT
   // fall back to "0 tokens" — under real RPC load that's indistinguishable
   // from a genuine empty wallet and was confirmed live to fabricate fake
@@ -488,11 +491,24 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
       lastUpdated: now,
       notes: [
         transferSource === "db+rpc-tail"
-          ? `Holder balances and clusters are derived from Transfer events in blocks ${transfers[0]?.blockNumber.toString() ?? fromBlock.toString()}–${latestBlock.toString()} (indexed history plus live recent activity) plus current balanceOf reads.`
-          : `Holder balances and clusters are derived from Transfer events in blocks ${fromBlock.toString()}–${latestBlock.toString()} plus current balanceOf reads.`,
+          ? `Holders and clusters are derived from Transfer events in blocks ${transfers[0]?.blockNumber.toString() ?? fromBlock.toString()}–${latestBlock.toString()} (indexed history plus live recent activity) plus balanceOf reads.`
+          : `Holders and clusters are derived from Transfer events in blocks ${fromBlock.toString()}–${latestBlock.toString()} plus balanceOf reads.`,
         clusterSource === "db"
-          ? "Balances are exact (balanceOf). Cluster detection uses the indexed database's full history for this token, not just the current scan window."
-          : "Balances are exact (balanceOf). Cluster detection observes only the scan window.",
+          ? "Cluster detection uses the indexed database's full history for this token, not just the current scan window."
+          : "Cluster detection observes only the scan window.",
+        // Every holder balance, DB-sourced or live, came from a real
+        // balanceOf call at some point — a DB-sourced one just isn't
+        // necessarily from THIS request, so it can lag live by up to one
+        // background-snapshot cycle. Said explicitly rather than letting
+        // "Balances are exact (balanceOf)" imply real-time when it isn't.
+        balanceSource === "db"
+          ? "Holder balances are from the background snapshot job's cached balanceOf reads for this token — accurate as of the last snapshot, not necessarily this instant."
+          : balanceSource === "db+rpc-partial"
+            ? "Holder balances are a mix of the background snapshot job's cached balanceOf reads and live balanceOf reads for wallets the snapshot doesn't cover yet."
+            : "Holder balances were read live via balanceOf for this request.",
+        metaSource === "db"
+          ? "Token metadata (name/symbol/decimals/totalSupply) is a cached read, refreshed periodically rather than for this request."
+          : "Token metadata was read live from the contract for this request.",
       ],
     },
     whales,
@@ -502,15 +518,6 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-
-function guessDeployer(transfers: RawTransfer[]): string | undefined {
-  // Deployer heuristic: recipient of the earliest mint (from == 0x0) in window.
-  const mints = transfers
-    .filter((t) => t.from.toLowerCase() === ZERO_ADDRESS)
-    .sort((a, b) => Number(a.blockNumber - b.blockNumber));
-  if (mints.length === 0) return undefined;
-  return mints[0].to.toLowerCase();
-}
 
 function countConnections(addr: string, edgeCount: Map<string, number>): number {
   let n = 0;

@@ -118,3 +118,43 @@ export const tokenMetadataCache = pgTable("token_metadata_cache", {
   totalSupplyRaw: numeric("total_supply_raw", { precision: 78, scale: 0 }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// Which tokens the background snapshot job should keep fresh. A token is
+// added here the first time anyone scans it live (see
+// lib/indexer/hybrid-balances.ts) — an explicit "someone cares about this
+// token" signal, not every contract the chain-wide indexer has ever seen a
+// transfer for (that would be nearly every token that's ever moved, most of
+// which nobody is looking at — periodically re-resolving live balanceOf for
+// all of them would be a large, mostly-wasted amount of RPC volume). One row
+// per token; `lastSnapshotAt` stays null until the snapshot job's first pass
+// over it completes, so a caller can tell "just registered, no snapshot yet"
+// apart from "snapshotted a while ago."
+export const trackedTokens = pgTable("tracked_tokens", {
+  tokenAddress: text("token_address").primaryKey(),
+  firstTrackedAt: timestamp("first_tracked_at", { withTimezone: true }).defaultNow().notNull(),
+  lastSnapshotAt: timestamp("last_snapshot_at", { withTimezone: true }),
+});
+
+// Periodic live-balanceOf snapshots — NOT balances derived/summed from
+// indexed transfer history (that has the partial-backfill correctness trap:
+// a wallet's running balance is only right if we've seen its ENTIRE history,
+// which isn't true yet). Every row here still came from a real balanceOf
+// call against the chain; the only thing that changed is WHEN that call
+// happened (on the snapshot job's schedule, not on every request that
+// happens to need it) — so a stored value is exactly as correct as a live
+// one was at the moment it was captured, just potentially stale by up to one
+// snapshot cycle. See lib/indexer/snapshot.ts for the write side and
+// lib/indexer/hybrid-balances.ts for how a scan reads (and gracefully falls
+// back past) this.
+export const holderBalances = pgTable(
+  "holder_balances",
+  {
+    tokenAddress: text("token_address").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    balanceRaw: numeric("balance_raw", { precision: 78, scale: 0 }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tokenAddress, table.walletAddress] }),
+  ],
+);

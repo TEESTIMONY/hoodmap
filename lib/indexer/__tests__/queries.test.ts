@@ -7,7 +7,19 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import * as schema from "../schema";
 import { runSyncOnce, CHUNK_BLOCKS } from "../worker";
-import { getTokenTransfers, getWalletTransfers, getTrendingTokens, getFunderGroups } from "../queries";
+import {
+  getTokenTransfers,
+  getWalletTransfers,
+  getTrendingTokens,
+  getFunderGroups,
+  trackToken,
+  getTrackedTokens,
+  markSnapshotted,
+  getHolderBalances,
+  upsertHolderBalances,
+  getCachedTokenMetadata,
+  upsertTokenMetadata,
+} from "../queries";
 import { getLatestBlockNumber } from "@/lib/scan/rpc.server";
 import { freshTestDb } from "./test-db";
 import type { Db } from "../db";
@@ -141,4 +153,126 @@ describe("indexer query layer (real ingested chain data, cross-checked by hand)"
     expect(new Set(match!.members)).toEqual(picked.expectedMembers);
     expect(match!.earliestFundedBlock).toBe(picked.expectedEarliest);
   });
+
+  // ─── tracking / balance-snapshot / metadata-cache query functions ───────
+  // Uses a separate, isolated PGlite instance rather than the shared
+  // `db`/`allRows` fixture above — these functions don't depend on real
+  // ingested transfer data, and a fresh DB makes each case's row counts
+  // exact and independent of whatever the live chain happened to contain
+  // this run.
+
+  it("trackToken is idempotent (onConflictDoNothing) and preserves firstTrackedAt across re-registration", async () => {
+    const local = await freshTestDb();
+    const token = "0xTrackMe";
+
+    await trackToken(local, token);
+    const first = await local.select().from(schema.trackedTokens);
+    expect(first).toHaveLength(1);
+    expect(first[0].tokenAddress).toBe(token.toLowerCase());
+    expect(first[0].lastSnapshotAt).toBeNull();
+
+    const firstTrackedAt = first[0].firstTrackedAt;
+    await new Promise((r) => setTimeout(r, 20));
+    await trackToken(local, token); // re-register, should no-op
+
+    const second = await local.select().from(schema.trackedTokens);
+    expect(second).toHaveLength(1);
+    expect(second[0].firstTrackedAt).toEqual(firstTrackedAt);
+  }, 30_000);
+
+  it("getTrackedTokens orders never-snapshotted tokens first, then oldest-snapshotted first", async () => {
+    const local = await freshTestDb();
+    await trackToken(local, "0xNeverSnapshotted");
+    await trackToken(local, "0xSnapshottedOld");
+    await trackToken(local, "0xSnapshottedRecent");
+
+    await markSnapshotted(local, "0xSnapshottedOld", new Date("2020-01-01T00:00:00Z"));
+    await markSnapshotted(local, "0xSnapshottedRecent", new Date("2025-01-01T00:00:00Z"));
+
+    const rows = await getTrackedTokens(local);
+    console.log("getTrackedTokens order:", rows.map((r) => r.tokenAddress));
+    expect(rows.map((r) => r.tokenAddress)).toEqual([
+      "0xneversnapshotted",
+      "0xsnapshottedold",
+      "0xsnapshottedrecent",
+    ]);
+  }, 30_000);
+
+  it("upsertHolderBalances overwrites a previous snapshot for the same wallet rather than duplicating it", async () => {
+    const local = await freshTestDb();
+    const token = "0xTokenA";
+    await upsertHolderBalances(
+      local,
+      token,
+      new Map([
+        ["0xwallet1", 100n],
+        ["0xwallet2", 200n],
+      ]),
+    );
+    let balances = await getHolderBalances(local, token);
+    expect(balances.get("0xwallet1")).toBe(100n);
+    expect(balances.get("0xwallet2")).toBe(200n);
+    expect(balances.size).toBe(2);
+
+    // Re-snapshot: wallet1's balance changed, wallet2 is untouched by this
+    // call (a real snapshot pass always writes every candidate it
+    // resolved, but the DB-level overwrite behavior is what's under test
+    // here, not the job's calling convention).
+    await upsertHolderBalances(local, token, new Map([["0xwallet1", 999n]]));
+    balances = await getHolderBalances(local, token);
+    expect(balances.get("0xwallet1")).toBe(999n);
+    expect(balances.get("0xwallet2")).toBe(200n);
+    expect(balances.size).toBe(2);
+
+    const rows = await local.select().from(schema.holderBalances);
+    expect(rows).toHaveLength(2); // overwrite, not a duplicate row
+  }, 30_000);
+
+  it("getHolderBalances only returns rows for the requested token, not another token's balances", async () => {
+    const local = await freshTestDb();
+    await upsertHolderBalances(local, "0xTokenA", new Map([["0xwallet1", 111n]]));
+    await upsertHolderBalances(local, "0xTokenB", new Map([["0xwallet1", 222n]]));
+
+    const balancesA = await getHolderBalances(local, "0xTokenA");
+    const balancesB = await getHolderBalances(local, "0xTokenB");
+    expect(balancesA.get("0xwallet1")).toBe(111n);
+    expect(balancesB.get("0xwallet1")).toBe(222n);
+  }, 30_000);
+
+  it("upsertTokenMetadata + getCachedTokenMetadata round-trip and overwrite on re-write", async () => {
+    const local = await freshTestDb();
+    const token = "0xTokenMeta";
+    await upsertTokenMetadata(local, token, {
+      name: "Test Token",
+      symbol: "TEST",
+      decimals: 18,
+      totalSupplyRaw: 1_000_000_000_000_000_000_000n,
+    });
+
+    const cached = await getCachedTokenMetadata(local, token);
+    expect(cached?.name).toBe("Test Token");
+    expect(cached?.symbol).toBe("TEST");
+    expect(cached?.decimals).toBe(18);
+    expect(cached?.totalSupplyRaw).toBe("1000000000000000000000");
+
+    // Re-write (simulating a later snapshot cycle after a mint changed
+    // totalSupply) — must overwrite, not error or duplicate.
+    await upsertTokenMetadata(local, token, {
+      name: "Test Token",
+      symbol: "TEST",
+      decimals: 18,
+      totalSupplyRaw: 2_000_000_000_000_000_000_000n,
+    });
+    const updated = await getCachedTokenMetadata(local, token);
+    expect(updated?.totalSupplyRaw).toBe("2000000000000000000000");
+
+    const rows = await local.select().from(schema.tokenMetadataCache);
+    expect(rows).toHaveLength(1);
+  }, 30_000);
+
+  it("getCachedTokenMetadata returns null for a token that's never been cached", async () => {
+    const local = await freshTestDb();
+    const cached = await getCachedTokenMetadata(local, "0xNeverCached");
+    expect(cached).toBeNull();
+  }, 30_000);
 });

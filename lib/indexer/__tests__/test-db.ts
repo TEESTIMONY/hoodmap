@@ -56,6 +56,20 @@ export const TEST_DDL = `
     PRIMARY KEY (token_address, wallet_address)
   );
   CREATE INDEX wallet_funders_token_funder_idx ON wallet_funders (token_address, funder_address);
+
+  CREATE TABLE tracked_tokens (
+    token_address TEXT PRIMARY KEY,
+    first_tracked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_snapshot_at TIMESTAMPTZ
+  );
+
+  CREATE TABLE holder_balances (
+    token_address TEXT NOT NULL,
+    wallet_address TEXT NOT NULL,
+    balance_raw NUMERIC(78, 0) NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (token_address, wallet_address)
+  );
 `;
 
 export async function freshTestDb(): Promise<Db> {

@@ -5,7 +5,7 @@
 // so the migration itself is a small, low-risk swap once real data exists,
 // not something written and tested for the first time under pressure.
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
-import { transfers, walletFunders } from "./schema";
+import { transfers, walletFunders, trackedTokens, holderBalances, tokenMetadataCache } from "./schema";
 import type { Db } from "./db";
 
 export interface TokenTransferRow {
@@ -171,4 +171,125 @@ export async function getFunderGroups(db: Db, tokenAddress: string): Promise<Fun
     .filter(([, v]) => v.members.length >= 2) // a "cluster" needs at least 2 funded wallets
     .map(([funderAddress, v]) => ({ funderAddress, members: v.members, earliestFundedBlock: v.earliest }))
     .sort((a, b) => b.members.length - a.members.length);
+}
+
+// ─── periodic balance snapshot support ─────────────────────────────────────
+// See lib/indexer/hybrid-balances.ts (read side, called from a scan) and
+// lib/indexer/snapshot.ts (write side, the background job) for how these
+// get used together.
+
+// Registers a token for the background snapshot job to keep fresh.
+// onConflictDoNothing — a token only needs to be registered once; scanning
+// it again later shouldn't reset firstTrackedAt or disturb lastSnapshotAt.
+export async function trackToken(db: Db, tokenAddress: string): Promise<void> {
+  await db
+    .insert(trackedTokens)
+    .values({ tokenAddress: tokenAddress.toLowerCase() })
+    .onConflictDoNothing();
+}
+
+export interface TrackedTokenRow {
+  tokenAddress: string;
+  lastSnapshotAt: Date | null;
+}
+
+// Ordered oldest-snapshotted-first (nulls — never snapshotted — first of
+// all) so the background job naturally works through whichever tokens are
+// most overdue, rather than always starting from the same place in an
+// unordered scan and starving tokens near the end of the table.
+export async function getTrackedTokens(db: Db): Promise<TrackedTokenRow[]> {
+  const rows = await db
+    .select({ tokenAddress: trackedTokens.tokenAddress, lastSnapshotAt: trackedTokens.lastSnapshotAt })
+    .from(trackedTokens)
+    .orderBy(sql`${trackedTokens.lastSnapshotAt} asc nulls first`);
+  return rows;
+}
+
+export async function markSnapshotted(db: Db, tokenAddress: string, when: Date): Promise<void> {
+  await db
+    .update(trackedTokens)
+    .set({ lastSnapshotAt: when })
+    .where(eq(trackedTokens.tokenAddress, tokenAddress.toLowerCase()));
+}
+
+// All wallets this token has a live-balanceOf snapshot for. A wallet
+// missing from this map was never a snapshot candidate (or hasn't been
+// picked up by the job yet) — callers should resolve it live rather than
+// assume 0, same "absence isn't zero" rule used throughout this app's
+// balance handling.
+export async function getHolderBalances(db: Db, tokenAddress: string): Promise<Map<string, bigint>> {
+  const rows = await db
+    .select({ walletAddress: holderBalances.walletAddress, balanceRaw: holderBalances.balanceRaw })
+    .from(holderBalances)
+    .where(eq(holderBalances.tokenAddress, tokenAddress.toLowerCase()));
+  return new Map(rows.map((r) => [r.walletAddress, BigInt(r.balanceRaw)]));
+}
+
+// Unlike wallet_funders (write-once, onConflictDoNothing), a balance
+// genuinely changes over time — this must overwrite the previous snapshot,
+// not no-op against it.
+export async function upsertHolderBalances(
+  db: Db,
+  tokenAddress: string,
+  balances: Map<string, bigint>,
+): Promise<void> {
+  if (balances.size === 0) return;
+  const now = new Date();
+  const rows = Array.from(balances.entries()).map(([walletAddress, balanceRaw]) => ({
+    tokenAddress: tokenAddress.toLowerCase(),
+    walletAddress: walletAddress.toLowerCase(),
+    balanceRaw: balanceRaw.toString(),
+    updatedAt: now,
+  }));
+  await db
+    .insert(holderBalances)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [holderBalances.tokenAddress, holderBalances.walletAddress],
+      set: { balanceRaw: sql`excluded.balance_raw`, updatedAt: sql`excluded.updated_at` },
+    });
+}
+
+export interface CachedTokenMetadata {
+  name: string | null;
+  symbol: string | null;
+  decimals: number | null;
+  totalSupplyRaw: string | null;
+  updatedAt: Date;
+}
+
+export async function getCachedTokenMetadata(db: Db, tokenAddress: string): Promise<CachedTokenMetadata | null> {
+  const rows = await db
+    .select()
+    .from(tokenMetadataCache)
+    .where(eq(tokenMetadataCache.address, tokenAddress.toLowerCase()));
+  return rows[0] ?? null;
+}
+
+export async function upsertTokenMetadata(
+  db: Db,
+  tokenAddress: string,
+  meta: { name: string; symbol: string; decimals: number; totalSupplyRaw: bigint },
+): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(tokenMetadataCache)
+    .values({
+      address: tokenAddress.toLowerCase(),
+      name: meta.name,
+      symbol: meta.symbol,
+      decimals: meta.decimals,
+      totalSupplyRaw: meta.totalSupplyRaw.toString(),
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: tokenMetadataCache.address,
+      set: {
+        name: meta.name,
+        symbol: meta.symbol,
+        decimals: meta.decimals,
+        totalSupplyRaw: meta.totalSupplyRaw.toString(),
+        updatedAt: now,
+      },
+    });
 }
