@@ -5,6 +5,8 @@ import {
   bubbleGlowCss,
   bubbleGradientCss,
   bubbleRadius,
+  buildClusterLinks,
+  curvedLinkPath,
   MAX_BUBBLE_RADIUS,
   MIN_BUBBLE_RADIUS,
   NEUTRAL_BUBBLE_COLOR,
@@ -126,5 +128,77 @@ describe("bubbleGlowCss", () => {
     // which is invalid and silently dropped by the browser.
     const shadow = bubbleGlowCss(NEUTRAL_BUBBLE_COLOR, 20, 1.7);
     expect(shadow).not.toMatch(/\)(aa|55)/);
+  });
+});
+
+describe("buildClusterLinks", () => {
+  const rendered = new Set(["funder", "kid1", "kid2", "kid3"]);
+
+  it("draws a directed star from the funder to every other rendered member when the funder is rendered", () => {
+    const groups = [{ id: "g-0", wallets: ["funder", "kid1", "kid2", "kid3"] }];
+    const links = buildClusterLinks(groups, rendered);
+    expect(links).toHaveLength(3);
+    for (const link of links) {
+      expect(link.a).toBe("funder");
+      expect(link.directed).toBe(true);
+      expect(link.groupId).toBe("g-0");
+    }
+    expect(links.map((l) => l.b).sort()).toEqual(["kid1", "kid2", "kid3"]);
+  });
+
+  it("falls back to an undirected chain when the funder itself isn't rendered", () => {
+    const groups = [{ id: "g-0", wallets: ["unrendered-funder", "kid1", "kid2", "kid3"] }];
+    const links = buildClusterLinks(groups, rendered);
+    // Chain among the 3 rendered members: kid1-kid2, kid2-kid3.
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link.directed).toBe(false);
+      expect(link.a).not.toBe("unrendered-funder");
+      expect(link.b).not.toBe("unrendered-funder");
+    }
+  });
+
+  it("draws nothing for a cluster with fewer than 2 rendered members", () => {
+    const groups = [{ id: "g-0", wallets: ["funder", "not-rendered-1", "not-rendered-2"] }];
+    expect(buildClusterLinks(groups, rendered)).toHaveLength(0);
+  });
+
+  it("handles multiple independent clusters correctly", () => {
+    const groups = [
+      { id: "g-0", wallets: ["funder", "kid1", "kid2"] },
+      { id: "g-1", wallets: ["kid3", "unrendered-funder", "also-unrendered"] },
+    ];
+    // g-1: funder "unrendered-funder" not in `rendered`, only "kid3" from
+    // that group's wallets is rendered — fewer than 2 rendered members, so
+    // g-1 contributes nothing; only g-0's 2 directed links should exist.
+    const links = buildClusterLinks(groups, rendered);
+    expect(links.every((l) => l.groupId === "g-0")).toBe(true);
+    expect(links).toHaveLength(2);
+  });
+});
+
+describe("curvedLinkPath", () => {
+  it("starts and ends at the given points", () => {
+    const path = curvedLinkPath(0, 0, 100, 0, 0);
+    expect(path).toMatch(/^M 0 0 Q/);
+    expect(path).toMatch(/100 0$/);
+  });
+
+  it("bows in opposite directions for even vs. odd seeds (visual variety, not overlapping)", () => {
+    const evenPath = curvedLinkPath(0, 0, 100, 0, 0);
+    const oddPath = curvedLinkPath(0, 0, 100, 0, 1);
+    expect(evenPath).not.toBe(oddPath);
+  });
+
+  it("caps the bow amount so very long connectors don't curve excessively", () => {
+    const path = curvedLinkPath(0, 0, 10_000, 0, 0);
+    const match = path.match(/Q ([\d.-]+) ([\d.-]+)/);
+    expect(match).not.toBeNull();
+    const controlY = Math.abs(Number(match![2]));
+    expect(controlY).toBeLessThanOrEqual(22);
+  });
+
+  it("is deterministic for the same inputs", () => {
+    expect(curvedLinkPath(1, 2, 3, 4, 5)).toBe(curvedLinkPath(1, 2, 3, 4, 5));
   });
 });

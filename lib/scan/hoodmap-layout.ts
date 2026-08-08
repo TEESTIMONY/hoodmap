@@ -71,6 +71,72 @@ export function bubbleGlowCss(c: BubbleColor, radiusPx: number, intensity = 1): 
   return `0 0 ${spread}px ${glow}`;
 }
 
+export interface ClusterLink {
+  a: string;
+  b: string;
+  // true = a real funder->funded relationship (arrowhead a->b is honest to
+  // draw); false = a fallback connector between rendered members when the
+  // actual funder isn't itself in the rendered set, where no direction is
+  // actually known.
+  directed: boolean;
+  groupId: string;
+}
+
+/**
+ * Builds HoodMap's cluster connector edges from real funding relationships
+ * instead of an arbitrary rank-based ordering. `groups[].wallets` is
+ * expected in [funder, ...funded] order — exactly how
+ * analyze.server.ts's detectWalletClusters constructs it
+ * (`[funder, ...wallets]`). Only wallets present in `renderedIds` can
+ * anchor or receive a drawn edge — a cluster member holding too little to
+ * make the rendered top-N still exists, it just can't be pointed at.
+ */
+export function buildClusterLinks(
+  groups: { id: string; wallets: string[] }[],
+  renderedIds: ReadonlySet<string>,
+): ClusterLink[] {
+  const links: ClusterLink[] = [];
+  for (const g of groups) {
+    const funder = g.wallets[0];
+    const renderedMembers = g.wallets.filter((w) => renderedIds.has(w));
+    if (renderedMembers.length < 2) continue;
+    if (funder != null && renderedIds.has(funder)) {
+      for (const w of renderedMembers) {
+        if (w === funder) continue;
+        links.push({ a: funder, b: w, directed: true, groupId: g.id });
+      }
+    } else {
+      // The true funder didn't make the rendered set (e.g. too small a
+      // holding to be in the top-N) — chain the rendered members together
+      // instead so the cluster still visually reads as connected, without
+      // implying a specific funding direction we can't actually show.
+      for (let i = 0; i < renderedMembers.length - 1; i++) {
+        links.push({ a: renderedMembers[i], b: renderedMembers[i + 1], directed: false, groupId: g.id });
+      }
+    }
+  }
+  return links;
+}
+
+/**
+ * A gently curved (quadratic-bezier) SVG path string between two points,
+ * instead of a straight line — offset perpendicular to the line by a
+ * seeded direction so multiple connectors radiating from the same funder
+ * don't all bow identically flat on top of each other.
+ */
+export function curvedLinkPath(x1: number, y1: number, x2: number, y2: number, seed: number): string {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+  const bow = Math.min(dist * 0.18, 22);
+  const nx = -dy / dist;
+  const ny = dx / dist;
+  const sign = seed % 2 === 0 ? 1 : -1;
+  const mx = (x1 + x2) / 2 + nx * bow * sign;
+  const my = (y1 + y2) / 2 + ny * bow * sign;
+  return `M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`;
+}
+
 export interface SimNode {
   id: string;
   x: number;

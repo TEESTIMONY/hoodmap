@@ -10,10 +10,12 @@ import {
   bubbleGlowCss,
   bubbleGradientCss,
   bubbleRadius,
+  buildClusterLinks,
+  curvedLinkPath,
   NEUTRAL_BUBBLE_COLOR,
   stepForceSimulation,
   type BubbleColor,
-  type SimLink,
+  type ClusterLink,
   type SimNode,
 } from "@/lib/scan/hoodmap-layout";
 import { cn, hashString } from "@/lib/utils";
@@ -61,7 +63,7 @@ export function HoodMapView({
   // when the node set changes or a bubble is selected (rare, cheap).
   const simMapRef = useRef<Map<string, SimNode>>(new Map());
   const bubbleElRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const lineElRefs = useRef<Map<string, SVGLineElement>>(new Map());
+  const lineElRefs = useRef<Map<string, SVGPathElement>>(new Map());
   const [ready, setReady] = useState(false);
 
   // Same reasoning applies to pan: dragging fires mousemove at a similar
@@ -192,23 +194,11 @@ export function HoodMapView({
     simMapRef.current = new Map(simNodes.map((n) => [n.id, n]));
     setReady(true); // one render so bubble/line elements mount at a real starting position
 
-    const links: SimLink[] = [];
-    const byGroup = new Map<string, string[]>();
-    for (const n of topNodes) {
-      if (!n.group) continue;
-      const arr = byGroup.get(n.group) ?? [];
-      arr.push(n.id);
-      byGroup.set(n.group, arr);
-    }
-    // Chained (a-b, b-c, c-d, …), not a star hub — matches how a reference
-    // bubble map draws a cluster as a connected sequence of dots rather
-    // than everything radiating from one anchor.
-    for (const members of byGroup.values()) {
-      if (members.length < 2) continue;
-      for (let i = 0; i < members.length - 1; i++) {
-        links.push({ a: members[i], b: members[i + 1] });
-      }
-    }
+    // Real funder->funded edges (a star from whoever actually funded the
+    // cluster), not an arbitrary rank-order chain — see buildClusterLinks'
+    // own docs for why this is honest to draw as directed.
+    const renderedIds = new Set(topNodes.map((n) => n.id));
+    const links: ClusterLink[] = buildClusterLinks(groups, renderedIds);
 
     let alpha = 1;
     let tick = 0;
@@ -224,15 +214,13 @@ export function HoodMapView({
         }
       }
       for (const link of links) {
-        const line = lineElRefs.current.get(`${link.a}::${link.b}`);
-        if (!line) continue;
+        const path = lineElRefs.current.get(`${link.a}::${link.b}`);
+        if (!path) continue;
         const a = simMapRef.current.get(link.a);
         const b = simMapRef.current.get(link.b);
         if (!a || !b) continue;
-        line.setAttribute("x1", String(a.x));
-        line.setAttribute("y1", String(a.y));
-        line.setAttribute("x2", String(b.x));
-        line.setAttribute("y2", String(b.y));
+        const seed = hashString(`${link.a}::${link.b}`);
+        path.setAttribute("d", curvedLinkPath(a.x, a.y, b.x, b.y, seed));
       }
     }
 
@@ -270,24 +258,17 @@ export function HoodMapView({
   const clusterColors = assignClusterColors(groupIds);
   const nodeById = new Map(topNodes.map((n) => [n.id, n]));
 
-  // Only draw a cluster boundary/line pair when 2+ members are actually
-  // rendered — a cluster whose only visible member fell inside the top-100
-  // still gets its color (it's honestly still part of that cluster), it
-  // just has no line to draw. Structural only — positions come from refs.
-  const clusterLinkPairs: { a: string; b: string }[] = [];
-  const byGroup = new Map<string, WalletNode[]>();
-  for (const n of topNodes) {
-    if (!n.group) continue;
-    const arr = byGroup.get(n.group) ?? [];
-    arr.push(n);
-    byGroup.set(n.group, arr);
-  }
-  for (const members of byGroup.values()) {
-    if (members.length < 2) continue;
-    for (let i = 0; i < members.length - 1; i++) {
-      clusterLinkPairs.push({ a: members[i].id, b: members[i + 1].id });
-    }
-  }
+  // Only draw a cluster connector when 2+ members are actually rendered —
+  // a cluster whose only visible member fell inside the top-100 still
+  // gets its color (it's honestly still part of that cluster), it just
+  // has no line to draw. Structural only — positions come from refs.
+  // Directed (real funder->funded, gets an arrowhead) whenever the actual
+  // funder made the rendered set; an undirected chain fallback otherwise —
+  // see buildClusterLinks' own docs.
+  const clusterLinkPairs = buildClusterLinks(
+    groups,
+    new Set(topNodes.map((n) => n.id)),
+  );
 
   const selected = selectedId ? nodeById.get(selectedId) : undefined;
   const selectedGroup = selected?.group ? groups.find((g) => g.id === selected.group) : undefined;
@@ -352,30 +333,48 @@ export function HoodMapView({
           {ready && width > 0 && (
             <svg viewBox={`0 0 ${width} ${CANVAS_HEIGHT}`} className="absolute inset-0 h-full w-full">
               <defs>
-                <linearGradient id="hoodmap-link" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#D6FA4D" />
-                  <stop offset="100%" stopColor="#17B04A" />
-                </linearGradient>
+                {/* fill="context-stroke" (modern-browser CSS Color spec
+                    feature) means one marker definition automatically
+                    matches whichever cluster's stroke color references it —
+                    no need for a marker per cluster hue. */}
+                <marker
+                  id="hoodmap-arrow"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
+                </marker>
               </defs>
               {clusterLinkPairs.map((pair) => {
                 const a = simMapRef.current.get(pair.a);
                 const b = simMapRef.current.get(pair.b);
                 if (!a || !b) return null;
+                // Connector color matches its own cluster's hue (previously
+                // a fixed lime-green gradient regardless of which cluster
+                // it belonged to) — consistent with the legend and bubbles.
+                const linkColor = bubbleColorCss(clusterColors.get(pair.groupId) ?? NEUTRAL_BUBBLE_COLOR);
+                const seed = hashString(`${pair.a}::${pair.b}`);
                 return (
-                  <line
+                  <path
                     key={`${pair.a}::${pair.b}`}
                     ref={(el) => {
                       const key = `${pair.a}::${pair.b}`;
                       if (el) lineElRefs.current.set(key, el);
                       else lineElRefs.current.delete(key);
                     }}
-                    x1={a.x}
-                    y1={a.y}
-                    x2={b.x}
-                    y2={b.y}
-                    stroke="url(#hoodmap-link)"
-                    strokeOpacity={0.4}
-                    strokeWidth={1}
+                    d={curvedLinkPath(a.x, a.y, b.x, b.y, seed)}
+                    fill="none"
+                    stroke={linkColor}
+                    strokeOpacity={0.5}
+                    strokeWidth={1.25}
+                    // Only a real funder->funded edge gets an arrowhead —
+                    // the undirected chain fallback (funder itself wasn't
+                    // rendered) shouldn't imply a direction we don't know.
+                    markerEnd={pair.directed ? "url(#hoodmap-arrow)" : undefined}
                   />
                 );
               })}
@@ -428,13 +427,17 @@ export function HoodMapView({
                     }}
                   >
                     {/* Visual layer: one-time pop-in (its own transform),
-                        flat-ish gradient fill + subtle colored glow,
-                        hover/selection via filter + ring — neither touches
+                        flat-ish gradient fill + colored glow, hover/
+                        selection via filter + ring — neither touches
                         transform, so nothing fights the idle layer above.
-                        Selected uses a clean white ring (not the brand
-                        lime) — a distinct "this one" outline independent
-                        of cluster color, matching a reference bubble map's
-                        selection treatment. */}
+                        Glow is deliberately tiered: unclustered bubbles
+                        stay flat/near-glowless (background noise), a
+                        clustered bubble gets a real glow (it's part of
+                        something worth noticing), selected gets the most —
+                        matches a reference bubble map's "active nodes glow,
+                        background dots don't" distinction. Selected uses a
+                        clean white ring (not the brand lime) — a distinct
+                        "this one" outline independent of cluster color. */}
                     <div
                       className={cn(
                         "h-full w-full rounded-full ring-2 ring-canvas transition-[filter] duration-150 hover:brightness-110",
@@ -442,7 +445,7 @@ export function HoodMapView({
                       )}
                       style={{
                         background: bubbleGradientCss(color),
-                        boxShadow: bubbleGlowCss(color, pos.r, isSelected ? 1.7 : 1),
+                        boxShadow: bubbleGlowCss(color, pos.r, isSelected ? 1.7 : n.group ? 1.35 : 1),
                         animation: "bubble-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both",
                         animationDelay: `${popDelay}ms`,
                       }}
