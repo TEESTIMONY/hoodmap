@@ -21,9 +21,11 @@ export interface TokenTransferRow {
 // latestBlock, MAX_TRANSFER_LOGS) — the live version is bounded by
 // SCAN_BLOCKS (currently 50,000) and a hard transfer cap (3,000) purely to
 // fit inside a serverless request's time budget. This has neither
-// constraint: it's an indexed query against data that's already local, so
-// "give me this token's ENTIRE history" is a normal query, not a request
-// that risks timing out.
+// constraint at the query level (an indexed query against local data isn't
+// a request that risks timing out) — but the transfers table itself IS
+// bounded, by lib/indexer/prune.ts's retention window (currently ~20
+// hours), to control storage. "This token's entire retained history," not
+// literally entire history back to genesis.
 export async function getTokenTransfers(
   db: Db,
   tokenAddress: string,
@@ -52,9 +54,11 @@ export async function getTokenTransfers(
 // Replaces wallet-analyze.server.ts's tiered fetchWalletTransferLogs sweep
 // (currently capped at 1,500,000 blocks / 250 transfers to fit a request's
 // time budget, per this session's live-measured timing). This is one
-// indexed query across the wallet's ENTIRE cross-token history, no tiering
-// needed — the tiering existed specifically to bound live RPC cost, which
-// doesn't apply to a query against already-ingested data.
+// indexed query across the wallet's retained cross-token history (see
+// lib/indexer/prune.ts — bounded to ~20 hours, not literally forever), no
+// RPC-cost-driven tiering needed — that tiering existed specifically to
+// bound live RPC cost, which doesn't apply to a query against already-
+// ingested data.
 export async function getWalletTransfers(
   db: Db,
   wallet: string,

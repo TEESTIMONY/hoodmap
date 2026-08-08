@@ -74,7 +74,7 @@ maybeDescribe("resolveBalancesHybrid (real Supabase DB + real RPC)", () => {
       return;
     }
     const knownWallet = Array.from(stored.keys())[0];
-    const extraWallet = "0x0000000000000000000000000000000000cafe"; // not in any snapshot
+    const extraWallet = "0x000000000000000000000000000000000000cafe"; // not in any snapshot
 
     const hybrid = await resolveBalancesHybrid(CASHCAT, [knownWallet, extraWallet]);
     console.log("Mixed-candidate result:", hybrid.source, Array.from(hybrid.balances.entries()));

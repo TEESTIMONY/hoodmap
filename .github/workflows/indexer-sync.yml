@@ -1,11 +1,14 @@
 # Scheduled ingest sync — the free, no-new-account way to run the indexer
 # worker before/instead of paying for an always-on host (Render Starter,
-# Fly.io, etc.). Runs lib/indexer/run-once.ts (transfer sync) then
-# lib/indexer/snapshot-once.ts (balance/metadata snapshot for tracked
-# tokens) on a schedule; each run picks up exactly where the last one left
-# off (progress is durable in Postgres — sync_state for the transfer sync,
-# tracked_tokens.last_snapshot_at for the balance snapshot), so a missed or
-# overlapping run is harmless.
+# Fly.io, etc.). Runs lib/indexer/run-once.ts (transfer sync), then
+# lib/indexer/prune-once.ts (deletes transfer rows older than the retention
+# window — the unfiltered chain-wide scan grows without bound otherwise;
+# this already exceeded Supabase's free-tier storage quota once and flipped
+# the database read-only mid-sync), then lib/indexer/snapshot-once.ts
+# (balance/metadata snapshot for tracked tokens) on a schedule; each run
+# picks up exactly where the last one left off (progress is durable in
+# Postgres — sync_state for the transfer sync, tracked_tokens.last_snapshot_at
+# for the balance snapshot), so a missed or overlapping run is harmless.
 #
 # Setup required before this does anything:
 #   1. Add a repo secret named DATABASE_URL (Settings -> Secrets and
@@ -42,10 +45,10 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Bumped from 10 -> 16 minutes to fit the new snapshot step alongside
-    # the existing transfer sync, both bounded by their own time budgets
+    # Bumped 10 -> 16 -> 18 minutes to fit the prune step alongside the
+    # existing sync/snapshot steps, each bounded by its own time budget
     # below, plus headroom for checkout/npm ci/node startup.
-    timeout-minutes: 16
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -65,9 +68,18 @@ jobs:
       - run: npx tsx lib/indexer/run-once.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # ~6 minutes — trimmed from 8 to make room for the snapshot step
-          # below inside the same job timeout.
-          INDEXER_TIME_BUDGET_MS: "360000"
+          # ~5 minutes — trimmed to make room for the prune step below
+          # inside the same job timeout.
+          INDEXER_TIME_BUDGET_MS: "300000"
+      # Deletes transfer rows older than the retention window (see
+      # lib/indexer/prune.ts for why this exists and how the window was
+      # chosen). Runs right after the sync step, before the snapshot step —
+      # partly so the snapshot job's own "full history" query reads a
+      # bounded, already-pruned table rather than an ever-growing one.
+      - run: npx tsx lib/indexer/prune-once.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PRUNE_TIME_BUDGET_MS: "180000"
       # Balance/metadata snapshot for whichever tokens have actually been
       # scanned (trackedTokens — see lib/indexer/hybrid-balances.ts). Runs
       # after the transfer sync so a token tracked seconds ago by this
@@ -76,6 +88,7 @@ jobs:
       - run: npx tsx lib/indexer/snapshot-once.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          # ~6 minutes, leaving headroom inside the 16-minute job timeout
-          # above alongside the sync step and checkout/npm ci/node startup.
-          SNAPSHOT_TIME_BUDGET_MS: "360000"
+          # ~5 minutes, leaving headroom inside the 18-minute job timeout
+          # above alongside the sync/prune steps and checkout/npm ci/node
+          # startup.
+          SNAPSHOT_TIME_BUDGET_MS: "300000"

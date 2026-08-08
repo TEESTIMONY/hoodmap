@@ -77,7 +77,8 @@ export const syncState = pgTable("sync_state", {
 // Who funded whom, first — one row per (token, wallet) recording that
 // wallet's FIRST observed inbound transfer of that specific token, and who
 // sent it. This is what lets cluster detection ("co-funded" wallets) run
-// against the database's full indexed history instead of the live
+// against the database's retained history (see lib/indexer/prune.ts —
+// bounded, not unbounded, to control storage) instead of the live
 // scanner's capped MAX_TRANSFER_LOGS window — a wallet's first funder for
 // a token, once observed, never changes, so this only ever needs writing
 // once per (token, wallet), making it cheap to maintain incrementally as

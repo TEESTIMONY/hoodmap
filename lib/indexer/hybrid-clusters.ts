@@ -1,7 +1,12 @@
 // Drop-in-compatible replacement for analyze.server.ts's live
 // detectWalletClusters — same output shape (WalletGroup[]) — built from
-// wallet_funders' full indexed history instead of whatever fits inside
-// the live scanner's MAX_TRANSFER_LOGS-capped transfer set.
+// wallet_funders, maintained incrementally by the ingest worker across
+// every transfer it processes within its retention window (see
+// lib/indexer/prune.ts — currently ~20 hours, NOT unbounded), with no
+// MAX_TRANSFER_LOGS cap the way the live scanner's transfer set has. For a
+// busy token this can still see meaningfully more of a token's activity
+// than the live scanner's capped candidate set, even though the nominal
+// block window is no longer strictly wider than SCAN_BLOCKS.
 //
 // Unlike balance data, cluster detection has no "starting balance"
 // correctness trap: a funding relationship only needs to have been SEEN
@@ -71,9 +76,9 @@ export async function detectWalletClustersHybrid(
       pctSupply: +pctSupply.toFixed(2),
       risk: pctSupply > 15 ? "high" : pctSupply > 6 ? "medium" : "low",
       note: isDev
-        ? "Wallets funded directly by the deployer, across this token's full indexed history (not just the recent scan window)."
-        : `Wallets that share a common funding source (${short(g.funderAddress)}), across this token's full indexed history (not just the recent scan window).`,
-      reason: `${members.length} wallets received their first observed inbound transfer from ${short(g.funderAddress)}, found from the indexed database's full history rather than the last ${scanBlocks.toString()} blocks alone.`,
+        ? "Wallets funded directly by the deployer, from the indexer's retained transfer history (not just this scan's own window)."
+        : `Wallets that share a common funding source (${short(g.funderAddress)}), from the indexer's retained transfer history (not just this scan's own window).`,
+      reason: `${members.length} wallets received their first observed inbound transfer from ${short(g.funderAddress)}, found from the indexed database rather than the last ${scanBlocks.toString()} blocks alone.`,
     });
   }
 

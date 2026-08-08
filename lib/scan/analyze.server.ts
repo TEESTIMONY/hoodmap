@@ -238,7 +238,7 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
     const key = from < to ? `${from}|${to}` : `${to}|${from}`;
     edgeCount.set(key, (edgeCount.get(key) ?? 0) + 1);
   }
-  // Tries the indexed database's full history first (via wallet_funders,
+  // Tries the indexed database's retained history first (via wallet_funders,
   // maintained incrementally by the ingest worker — see
   // lib/indexer/hybrid-clusters.ts), falling back to the unmodified live
   // detectWalletClusters (capped to this scan's transfer window) whenever
@@ -494,7 +494,7 @@ export async function analyzeTokenLive(rawAddress: string): Promise<AnalysisResu
           ? `Holders and clusters are derived from Transfer events in blocks ${transfers[0]?.blockNumber.toString() ?? fromBlock.toString()}–${latestBlock.toString()} (indexed history plus live recent activity) plus balanceOf reads.`
           : `Holders and clusters are derived from Transfer events in blocks ${fromBlock.toString()}–${latestBlock.toString()} plus balanceOf reads.`,
         clusterSource === "db"
-          ? "Cluster detection uses the indexed database's full history for this token, not just the current scan window."
+          ? "Cluster detection uses the indexed database's retained transfer history for this token (currently ~20 hours, pruned to control storage), not just this scan's own window."
           : "Cluster detection observes only the scan window.",
         // Every holder balance, DB-sourced or live, came from a real
         // balanceOf call at some point — a DB-sourced one just isn't

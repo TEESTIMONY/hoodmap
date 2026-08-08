@@ -3,10 +3,15 @@
 // scan). For each token registered in trackedTokens (added there by a live
 // scan the first time anyone looks at it — see hybrid-balances.ts),
 // resolves the same candidate-holder set a live scan would pick, but from
-// the indexer's full history rather than a bounded window, refreshes their
-// balanceOf via live RPC, refreshes token metadata, and updates
-// lastSnapshotAt. This is what lets a scan of an already-tracked token read
-// balances straight from the database with zero live RPC calls.
+// the indexer's retained history (see lib/indexer/prune.ts — bounded to a
+// retention window to control storage, not literally unbounded) rather
+// than the live scanner's MAX_TRANSFER_LOGS-capped, block-bounded window,
+// refreshes their balanceOf via live RPC, refreshes token metadata, and
+// updates lastSnapshotAt. This is what lets a scan of an already-tracked
+// token read balances straight from the database with zero live RPC calls
+// (for whichever candidates the snapshot's retained-history view and the
+// live scan's own window happen to agree on — see hybrid-balances.ts for
+// how a mismatch is handled).
 //
 // `db` is injected (not imported directly), same reasoning as worker.ts:
 // keeps the core loop testable against PGlite without a live database.
