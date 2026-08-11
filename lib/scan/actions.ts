@@ -14,12 +14,9 @@ import {
   enforceTrendingRateLimit,
   enforceWalletScanRateLimit,
 } from "./rate-limit.server";
+import { isPlausibleAddress, INVALID_CONTRACT_ADDRESS_MESSAGE, INVALID_WALLET_ADDRESS_MESSAGE } from "./validate";
 import type { AnalysisResult } from "./types";
 import type { WalletPnlSummary } from "./wallet-types";
-
-function isPlausibleAddress(a: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(a.trim());
-}
 
 // Cache TTLs are deliberately short — this is about collapsing duplicate
 // concurrent/near-concurrent requests for the same token (the common case:
@@ -33,8 +30,12 @@ const TRENDING_CACHE_TTL_SECONDS = 60;
 const DEX_CACHE_TTL_SECONDS = 30;
 
 export async function analyzeTokenServer(address: string): Promise<AnalysisResult> {
+  // Defense-in-depth only — the real UI validates client-side first (see
+  // lib/scan/validate.ts's comment for why: a thrown Error's message gets
+  // redacted in production, so relying on this alone turned an everyday
+  // typo into an opaque 500 with no visible explanation).
   if (!isPlausibleAddress(address)) {
-    throw new Error("That doesn't look like a valid Robinhood Chain contract address.");
+    throw new Error(INVALID_CONTRACT_ADDRESS_MESSAGE);
   }
   await enforceScanRateLimit();
   const clean = address.trim();
@@ -62,8 +63,9 @@ export async function fetchDexScreenerTokenServer(address: string): Promise<DexP
 }
 
 export async function analyzeWalletServer(address: string): Promise<WalletPnlSummary> {
+  // Defense-in-depth only — see the matching comment on analyzeTokenServer.
   if (!isPlausibleAddress(address)) {
-    throw new Error("That doesn't look like a valid Robinhood Chain wallet address.");
+    throw new Error(INVALID_WALLET_ADDRESS_MESSAGE);
   }
   await enforceWalletScanRateLimit();
   return analyzeWalletLive(address.trim());

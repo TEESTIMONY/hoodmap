@@ -12,6 +12,7 @@ import { ClosedTradesTable } from "@/components/wallet/ClosedTradesTable";
 import { WalletTransfersTable } from "@/components/wallet/WalletTransfersTable";
 import { BubbleLoader } from "@/components/scan/BubbleLoader";
 import { analyzeWalletServer } from "@/lib/scan/actions";
+import { isPlausibleAddress, INVALID_WALLET_ADDRESS_MESSAGE } from "@/lib/scan/validate";
 import type { WalletPnlSummary } from "@/lib/scan/wallet-types";
 
 // See the matching comment on the token scan page — analyzeWalletServer can
@@ -43,11 +44,20 @@ export default function WalletScanPage() {
   const [transfersExpanded, setTransfersExpanded] = useState(false);
 
   async function runAnalysis(raw: string) {
-    if (!raw.trim()) return;
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    // Checked here, before the server action is ever called, specifically
+    // so a malformed address shows this exact friendly message instead of
+    // an opaque "POST /wallet 500" — see lib/scan/validate.ts's comment
+    // for why a server-side-only check isn't enough in production.
+    if (!isPlausibleAddress(trimmed)) {
+      setState({ kind: "error", message: INVALID_WALLET_ADDRESS_MESSAGE });
+      return;
+    }
     setState({ kind: "loading" });
     setTransfersExpanded(false);
     try {
-      const data = await analyzeWalletServer(raw.trim());
+      const data = await analyzeWalletServer(trimmed);
       setState({ kind: "ready", data });
     } catch (err) {
       setState({
