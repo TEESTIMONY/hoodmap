@@ -105,7 +105,19 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
 
   for (const tierBlocks of LOOKBACK_TIERS_BLOCKS) {
     const tierFrom = latest > tierBlocks ? latest - tierBlocks : 0n;
-    if (tierFrom >= scannedFrom) break;
+    // `continue`, not `break`: this only ever needs to be `break` when
+    // scannedFrom starts at `latest + 1n` (tiers are monotonically
+    // increasing, so once one tier's reach doesn't extend past what's
+    // already covered, no larger tier could either) — true before the
+    // hybrid DB coverage existed. Now scannedFrom can start at an arbitrary
+    // dbCoverageFromBlock that falls BETWEEN two tiers' reach (confirmed
+    // live: a wallet with dbCoverageFromBlock ~685k blocks back had tier1's
+    // 500k reach correctly not extend past it, but `break` then also
+    // skipped tier2's 1.5M reach, which DID have real, never-fetched
+    // history to contribute — silently producing "0 trades" for a wallet
+    // with real activity). `continue` still skips a tier that adds
+    // nothing, without abandoning a larger tier that might.
+    if (tierFrom >= scannedFrom) continue;
     const chunk = await fetchWalletTransferLogs(
       wallet,
       tierFrom,
