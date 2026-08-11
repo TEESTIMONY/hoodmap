@@ -1,9 +1,18 @@
-// Discovers "trending" tokens on Robinhood Chain from real on-chain activity.
-// There's no indexer for this chain, so this scans recent Transfer events
-// across ALL contracts (not just one address, unlike the single-token Scan
-// pipeline) and ranks by how many distinct wallets touched each token in the
-// window — the same signal a real trending list uses, just computed
-// directly from logs instead of a database. Server-only.
+// Discovers "trending" tokens on Robinhood Chain. Two sourcing paths:
+//
+// - Blockscout (preferred, see lib/blockscout/discover.ts): the chain's
+//   official indexer, real 24h volume and holder counts, no RPC scan
+//   needed at all.
+// - Live RPC (discoverTrendingTokensLive, below): scans recent Transfer
+//   events across ALL contracts (not just one address, unlike the
+//   single-token Scan pipeline) and ranks by how many distinct wallets
+//   touched each token in an ~800-block window — the original
+//   implementation, kept as the fallback for whenever Blockscout is
+//   unreachable or BLOCKSCOUT_API_KEY isn't configured. A third-party data
+//   source must never be the reason this page fails to load, same
+//   discipline as every DB-backed hybrid module in lib/indexer/.
+//
+// Server-only.
 
 import { formatUnits, getAddress, parseAbiItem, type Address, type Log } from "viem";
 import {
@@ -13,6 +22,8 @@ import {
   readTokenMetadataStrict,
   WETH_ADDRESS,
 } from "./rpc.server";
+import { blockscoutConfigured } from "@/lib/blockscout/client";
+import { discoverTrendingTokensBlockscout } from "@/lib/blockscout/discover";
 
 const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -50,7 +61,10 @@ const EXCLUDED_TOKENS = new Set<string>([WETH_ADDRESS]);
 //     cases cheaply; isNftContract() (ERC-165) below catches the rest.
 // Everything else is treated as a memecoin rather than trying to build a
 // positive allowlist, since that's what the actual data looks like here.
-function isNonMemeByNameOrSymbol(name: string, symbol: string): boolean {
+// Exported so lib/blockscout/discover.ts can apply the exact same
+// definition of "memecoin" — this shouldn't drift between the two sourcing
+// paths just because one reads from Blockscout and one from raw logs.
+export function isNonMemeByNameOrSymbol(name: string, symbol: string): boolean {
   const n = name.toLowerCase();
   const s = symbol.toLowerCase();
   if (n.includes("robinhood token")) return true;
@@ -81,11 +95,57 @@ export interface TrendingToken {
   symbol: string;
   decimals: number;
   totalSupply: number;
-  transferCount: number;
-  uniqueTraders: number;
+  // Populated when sourced from Blockscout: real holder count and real 24h
+  // volume in USD, computed by the chain's own indexer.
+  holdersCount?: number;
+  volume24hUsd?: number | null;
+  // Populated when sourced from the live-RPC fallback: unique wallets
+  // observed transacting in the scan window, and how many transfers.
+  transferCount?: number;
+  uniqueTraders?: number;
 }
 
-export async function discoverTrendingTokens(limit = 20): Promise<TrendingToken[]> {
+export interface DiscoverResult {
+  tokens: TrendingToken[];
+  source: "blockscout" | "live-rpc";
+}
+
+// Tries Blockscout first (real, chain-indexed volume/holder data — see
+// lib/blockscout/discover.ts), falls back to the live RPC scan below on
+// any failure (not configured, network error, rate limit, etc.) — same
+// "a data source problem must never be the reason a scan fails" pattern as
+// every DB-backed hybrid module in lib/indexer/. Returns which source
+// actually served the result so the UI can describe it honestly rather
+// than always claiming one or the other.
+export async function discoverTrendingTokens(limit = 20): Promise<DiscoverResult> {
+  if (blockscoutConfigured()) {
+    try {
+      // Same exclusion the live path applies via EXCLUDED_TOKENS (WETH is
+      // the quote side of nearly every swap, not "trending") plus the
+      // shared name/symbol heuristic — a token can slip past the name
+      // check (nothing about "WETH" matches any keyword in
+      // isNonMemeByNameOrSymbol) so both checks are needed, not just one.
+      const tokens = await discoverTrendingTokensBlockscout(
+        limit,
+        (name, symbol, address) => EXCLUDED_TOKENS.has(address) || isNonMemeByNameOrSymbol(name, symbol),
+      );
+      if (tokens.length > 0) return { tokens, source: "blockscout" };
+      // An empty result isn't necessarily wrong (a very young/quiet chain
+      // could legitimately have few memecoins matching the filter), but
+      // it's indistinguishable here from a subtler filtering issue —
+      // falling back to the live scan costs one extra RPC pass and can
+      // only help, never make an empty result worse.
+    } catch {
+      // Blockscout unreachable/misconfigured/rate-limited — fall through
+      // to the unmodified live path below exactly as if it had never been
+      // configured.
+    }
+  }
+  const tokens = await discoverTrendingTokensLive(limit);
+  return { tokens, source: "live-rpc" };
+}
+
+export async function discoverTrendingTokensLive(limit = 20): Promise<TrendingToken[]> {
   const latest = await getLatestBlockNumber();
   const fromBlock = latest > DISCOVERY_WINDOW_BLOCKS ? latest - DISCOVERY_WINDOW_BLOCKS : 0n;
 

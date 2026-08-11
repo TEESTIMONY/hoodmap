@@ -6,7 +6,7 @@
 
 import { analyzeTokenLive } from "./analyze.server";
 import { analyzeWalletLive } from "./wallet-analyze.server";
-import { discoverTrendingTokens, type TrendingToken } from "./discover.server";
+import { discoverTrendingTokens, type DiscoverResult } from "./discover.server";
 import { fetchDexScreenerToken, type DexPairData } from "./dexscreener";
 import { cached } from "./cache.server";
 import {
@@ -41,7 +41,7 @@ export async function analyzeTokenServer(address: string): Promise<AnalysisResul
   return cached(`scan:${clean.toLowerCase()}`, SCAN_CACHE_TTL_SECONDS, () => analyzeTokenLive(clean));
 }
 
-export async function discoverTrendingTokensServer(limit = 20): Promise<TrendingToken[]> {
+export async function discoverTrendingTokensServer(limit = 20): Promise<DiscoverResult> {
   await enforceTrendingRateLimit();
   return cached(`trending:${limit}`, TRENDING_CACHE_TTL_SECONDS, () => discoverTrendingTokens(limit));
 }

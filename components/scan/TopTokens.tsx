@@ -33,6 +33,7 @@ export function TopTokens({
   viewAllHref?: string;
 } = {}) {
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [source, setSource] = useState<"blockscout" | "live-rpc" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
@@ -52,7 +53,8 @@ export function TopTokens({
     setLoading(true);
     setError(null);
     try {
-      const tokens = await discoverTrendingTokensServer(limit);
+      const { tokens, source: resultSource } = await discoverTrendingTokensServer(limit);
+      setSource(resultSource);
       setRows(tokens.map((t) => ({ ...t, dex: null })));
       setLoading(false);
       setEnriching(true);
@@ -143,8 +145,15 @@ export function TopTokens({
                 <th className="px-2 py-2 text-right font-medium">1h</th>
                 <th className="px-2 py-2 text-right font-medium">6h</th>
                 <th className="px-2 py-2 text-right font-medium">24h</th>
-                <th className="px-2 py-2 text-right font-medium" title="Unique wallets observed on-chain in the scan window">
-                  Traders
+                <th
+                  className="px-2 py-2 text-right font-medium"
+                  title={
+                    source === "blockscout"
+                      ? "Total token holders, from Robinhood Chain's indexer"
+                      : "Unique wallets observed on-chain in the scan window"
+                  }
+                >
+                  {source === "blockscout" ? "Holders" : "Traders"}
                 </th>
                 <th className="px-4 py-2 text-right font-medium">Age</th>
               </tr>
@@ -214,7 +223,7 @@ export function TopTokens({
                   <PctCell value={r.dex?.priceChange.h6} />
                   <PctCell value={r.dex?.priceChange.h24} />
                   <td className="px-2 py-2.5 text-right text-ink">
-                    {formatCompactNumber(r.uniqueTraders)}
+                    {formatCompactNumber(source === "blockscout" ? (r.holdersCount ?? 0) : (r.uniqueTraders ?? 0))}
                   </td>
                   <td className="px-4 py-2.5 text-right text-ink-faint">
                     {r.dex?.createdAgoSeconds != null ? formatCompactAge(r.dex.createdAgoSeconds) : "—"}
@@ -228,10 +237,11 @@ export function TopTokens({
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-2.5 text-[11px] text-ink-faint">
         <span>
-          Sorted by 24h volume, highest first. Candidates are discovered by unique wallets observed
-          transacting on-chain in the last ~800 blocks — read directly from Robinhood Chain, not an
-          index. Price, market cap, liquidity and % change come from DexScreener where a pair
-          exists; shown as "—" otherwise, and sorted last.
+          {source === "blockscout"
+            ? "Sorted by 24h volume, highest first. Candidates are discovered from Robinhood Chain's official Blockscout indexer (24h volume + holder counts), not a live scan."
+            : "Sorted by 24h volume, highest first. Candidates are discovered by unique wallets observed transacting on-chain in the last ~800 blocks — read directly from Robinhood Chain, not an index (Blockscout was unavailable for this load)."}{" "}
+          Price, market cap, liquidity and % change come from DexScreener where a pair exists; shown
+          as "—" otherwise, and sorted last.
         </span>
         {viewAllHref && (
           <Link href={viewAllHref} className="shrink-0 whitespace-nowrap text-lime-soft hover:underline">
