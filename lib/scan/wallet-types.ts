@@ -14,6 +14,14 @@ export interface TokenRef {
 // between trades — a wallet might buy one position against WETH and
 // another against a stablecoin), not USD. USD is a separate, clearly
 // labeled conversion using each quote token's *current* rate.
+// USD fields (buyPriceUsd, realizedPnlUsd, etc.) are the same kind of
+// labeled approximation as WalletPnlSummary.realizedPnlUsd: converted using
+// the quote token's *current* rate (from cache.server.ts + DexScreener),
+// not its historical rate at each trade's actual block — genuinely useful
+// for a wallet trading across several quote assets where raw quote-token
+// amounts aren't directly comparable, but not literally "the price at the
+// time of trade." Undefined (not 0) when a rate couldn't be resolved for
+// that trade's quote token — never fabricated.
 export interface ClosedTrade {
   token: TokenRef;
   quoteToken: TokenRef;
@@ -25,6 +33,11 @@ export interface ClosedTrade {
   costBasisQuote: number;
   proceedsQuote: number;
   realizedPnlQuote: number;
+  buyPriceUsd?: number;
+  sellPriceUsd?: number;
+  costBasisUsd?: number;
+  proceedsUsd?: number;
+  realizedPnlUsd?: number;
   buyTimestamp: number;
   sellTimestamp: number;
   holdSeconds: number;
@@ -35,6 +48,7 @@ export interface OpenPosition {
   quoteToken: TokenRef;
   quantity: number;
   avgCostQuote: number;
+  avgCostUsd?: number;
   openedAt: number;
 }
 

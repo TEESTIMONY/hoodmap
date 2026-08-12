@@ -384,6 +384,36 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
     return { address, symbol: m?.symbol ?? "TOKEN", decimals: m?.decimals ?? 18 };
   };
 
+  // Resolved once per distinct quote token, ahead of building
+  // closedTrades/openPositions, so every USD-labeled field below (largest
+  // win/loss, avg cost, buy/sell price, pnlByQuote) shares the exact same
+  // rate instead of each independently re-fetching it. Same labeled-
+  // approximation caveat as before this existed: this is each quote
+  // asset's CURRENT rate, not its rate at the actual historical trade —
+  // genuinely useful for comparing trades priced against different quote
+  // assets on a common footing, not a claim about historical accuracy.
+  // Native ETH has no DexScreener listing of its own (it's not a token
+  // contract) — priced via WETH, which trades 1:1 with it.
+  const usdPriceByQuoteToken = new Map<string, number>();
+  for (const quoteAddr of quoteTokensUsed) {
+    const dexLookupAddr = quoteAddr === NATIVE_ETH_ADDRESS ? weth : quoteAddr;
+    try {
+      // Cached (see cache.server.ts) — quote assets are almost always
+      // WETH/native ETH or one of a small set of recognized reference
+      // tokens, so this is one of the most-repeated DexScreener lookups
+      // in the app across different wallets' scans.
+      const dex = await cached(`dex:${dexLookupAddr.toLowerCase()}`, 30, () => fetchDexScreenerToken(dexLookupAddr));
+      if (dex?.priceUsd != null) usdPriceByQuoteToken.set(quoteAddr, dex.priceUsd);
+    } catch {
+      // Leave unset — every consumer below already treats a missing rate
+      // as "no USD conversion available," never a fabricated 0.
+    }
+  }
+  const usdValue = (amountInQuote: number, quoteAddr: string): number | undefined => {
+    const price = usdPriceByQuoteToken.get(quoteAddr);
+    return price != null ? amountInQuote * price : undefined;
+  };
+
   const closedTrades: ClosedTrade[] = rawClosed.map((t) => ({
     token: tokenRef(t.token),
     quoteToken: tokenRef(t.quoteToken),
@@ -395,6 +425,11 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
     costBasisQuote: t.costBasisQuote,
     proceedsQuote: t.proceedsQuote,
     realizedPnlQuote: t.realizedPnlQuote,
+    buyPriceUsd: usdValue(t.buyPriceInQuote, t.quoteToken),
+    sellPriceUsd: usdValue(t.sellPriceInQuote, t.quoteToken),
+    costBasisUsd: usdValue(t.costBasisQuote, t.quoteToken),
+    proceedsUsd: usdValue(t.proceedsQuote, t.quoteToken),
+    realizedPnlUsd: usdValue(t.realizedPnlQuote, t.quoteToken),
     buyTimestamp: t.buyTimestamp,
     sellTimestamp: t.sellTimestamp,
     holdSeconds: t.holdSeconds,
@@ -406,6 +441,7 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
       quoteToken: tokenRef(p.quoteToken),
       quantity: p.quantity,
       avgCostQuote: p.avgCostQuote,
+      avgCostUsd: usdValue(p.avgCostQuote, p.quoteToken),
       openedAt: p.openedAt,
     }))
     .sort((a, b) => b.quantity * b.avgCostQuote - a.quantity * a.avgCostQuote);
@@ -427,25 +463,11 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
     undefined,
   );
 
-  // USD conversion is a labeled approximation: the trade prices themselves
-  // are historical and on-chain-derived, but converting each quote asset's
-  // total to USD uses its *current* price, not its price at each trade's
-  // block. Fetched per detected quote token (usually just one or two).
   const pnlByQuote: QuotePnlBreakdown[] = [];
   for (const quoteAddr of quoteTokensUsed) {
     const tradesForQuote = closedTrades.filter((t) => t.quoteToken.address === quoteAddr);
     const realizedPnlQuote = tradesForQuote.reduce((s, t) => s + t.realizedPnlQuote, 0);
-    let usdPrice: number | undefined;
-    try {
-      // Cached (see cache.server.ts) — quote assets are almost always
-      // WETH or one of a small set of recognized reference tokens, so this
-      // is one of the most-repeated DexScreener lookups in the app across
-      // different wallets' scans.
-      const dex = await cached(`dex:${quoteAddr.toLowerCase()}`, 30, () => fetchDexScreenerToken(quoteAddr));
-      usdPrice = dex?.priceUsd;
-    } catch {
-      usdPrice = undefined;
-    }
+    const usdPrice = usdPriceByQuoteToken.get(quoteAddr);
     pnlByQuote.push({
       quoteToken: tokenRef(quoteAddr),
       realizedPnlQuote,

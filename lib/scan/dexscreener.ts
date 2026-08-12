@@ -32,9 +32,13 @@ export interface DexPairData {
 }
 
 interface RawPair {
-  baseToken?: { symbol?: string };
-  quoteToken?: { symbol?: string };
+  baseToken?: { symbol?: string; address?: string };
+  quoteToken?: { symbol?: string; address?: string };
   priceUsd?: string;
+  // Base token's price expressed in units of the quote token — needed to
+  // derive the QUOTE token's own USD price (see the comment on priceUsd
+  // resolution below).
+  priceNative?: string;
   fdv?: number;
   liquidity?: { usd?: number };
   pairCreatedAt?: number;
@@ -97,8 +101,33 @@ export async function fetchDexScreenerToken(address: string): Promise<DexPairDat
   const quote = top?.quoteToken ?? {};
   const createdMs = top?.pairCreatedAt ? Number(top.pairCreatedAt) : undefined;
 
+  // DexScreener's `priceUsd` on a pair is always the BASE token's price —
+  // this token-search endpoint returns every pair touching the queried
+  // address regardless of which side it's on, so a token that's commonly
+  // the QUOTE side of its best-liquidity pair (WETH/native ETH being the
+  // extreme, near-universal case) would otherwise silently get the OTHER
+  // token's price back. Confirmed live: querying WETH's own address
+  // returned priceUsd: 0.1653 — that's CASHCAT's price (the best pair was
+  // "CASHCAT/WETH", CASHCAT as base), off by roughly 10,000x from WETH's
+  // real ~$1,900. Resolved by checking which side actually matches the
+  // queried address: if it's the quote side, invert through priceNative
+  // (base token's price in units of quote token) — 1 base token is worth
+  // priceNative quote-tokens and priceUsd dollars, so 1 quote-token is
+  // worth priceUsd/priceNative dollars.
+  const isQueriedTokenTheQuoteSide =
+    quote.address?.toLowerCase() === address.toLowerCase() &&
+    base.address?.toLowerCase() !== address.toLowerCase();
+  const resolvedPriceUsd = (() => {
+    if (!top?.priceUsd) return undefined;
+    const baseUsd = Number(top.priceUsd);
+    if (!isQueriedTokenTheQuoteSide) return baseUsd;
+    const priceNative = top?.priceNative ? Number(top.priceNative) : undefined;
+    if (!priceNative || priceNative <= 0) return undefined; // can't invert without it — no fabricated guess
+    return baseUsd / priceNative;
+  })();
+
   return {
-    priceUsd: top?.priceUsd ? Number(top.priceUsd) : undefined,
+    priceUsd: resolvedPriceUsd,
     marketCapUsd: top?.fdv ? Number(top.fdv) : undefined,
     liquidityUsd: top?.liquidity?.usd ? Number(top.liquidity.usd) : undefined,
     createdAgoSeconds: createdMs ? Math.floor((Date.now() - createdMs) / 1000) : undefined,

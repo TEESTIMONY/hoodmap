@@ -41,20 +41,33 @@ export function ClosedTradesTable({ trades }: { trades: ClosedTrade[] }) {
                     <td className="px-2 py-2.5 font-medium text-ink">{t.token.symbol}</td>
                     <td className="px-2 py-2.5 text-ink-faint">{t.quoteToken.symbol}</td>
                     <td className="px-2 py-2.5 text-right text-ink-muted">{shortNumber(t.quantity)}</td>
-                    <td className="px-2 py-2.5 text-right text-ink-muted">
-                      {shortNumber(t.buyPriceInQuote)}
+                    <td
+                      className="px-2 py-2.5 text-right text-ink-muted"
+                      title={t.buyPriceUsd != null ? `${shortNumber(t.buyPriceInQuote)} ${t.quoteToken.symbol}` : undefined}
+                    >
+                      {t.buyPriceUsd != null ? `$${shortNumber(t.buyPriceUsd)}` : shortNumber(t.buyPriceInQuote)}
                     </td>
-                    <td className="px-2 py-2.5 text-right text-ink-muted">
-                      {shortNumber(t.sellPriceInQuote)}
+                    <td
+                      className="px-2 py-2.5 text-right text-ink-muted"
+                      title={t.sellPriceUsd != null ? `${shortNumber(t.sellPriceInQuote)} ${t.quoteToken.symbol}` : undefined}
+                    >
+                      {t.sellPriceUsd != null ? `$${shortNumber(t.sellPriceUsd)}` : shortNumber(t.sellPriceInQuote)}
                     </td>
                     <td
                       className={cn(
                         "px-2 py-2.5 text-right font-medium",
                         win ? "text-success" : "text-danger",
                       )}
+                      title={
+                        t.realizedPnlUsd != null
+                          ? `${win ? "+" : ""}${shortNumber(t.realizedPnlQuote)} ${t.quoteToken.symbol}`
+                          : undefined
+                      }
                     >
                       {win ? "+" : ""}
-                      {shortNumber(t.realizedPnlQuote)} {t.quoteToken.symbol}
+                      {t.realizedPnlUsd != null
+                        ? `$${shortNumber(Math.abs(t.realizedPnlUsd))}`
+                        : `${shortNumber(t.realizedPnlQuote)} ${t.quoteToken.symbol}`}
                     </td>
                     <td className="px-2 py-2.5 text-right text-ink-faint">
                       {formatCompactAge(t.holdSeconds)}

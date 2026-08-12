@@ -28,8 +28,17 @@ export function OpenPositionsTable({ positions }: { positions: OpenPosition[] })
                 <tr key={`${p.token.address}-${p.quoteToken.address}-${i}`} className="border-b border-line/60 last:border-0">
                   <td className="px-2 py-2.5 font-medium text-ink">{p.token.symbol}</td>
                   <td className="px-2 py-2.5 text-right text-ink-muted">{shortNumber(p.quantity)}</td>
-                  <td className="px-2 py-2.5 text-right text-ink-muted">
-                    {shortNumber(p.avgCostQuote)} {p.quoteToken.symbol}
+                  <td
+                    className="px-2 py-2.5 text-right text-ink-muted"
+                    title={
+                      p.avgCostUsd != null
+                        ? `${shortNumber(p.avgCostQuote)} ${p.quoteToken.symbol}`
+                        : undefined
+                    }
+                  >
+                    {p.avgCostUsd != null
+                      ? `$${shortNumber(p.avgCostUsd)}`
+                      : `${shortNumber(p.avgCostQuote)} ${p.quoteToken.symbol}`}
                   </td>
                   <td className="px-2 py-2.5 text-right text-ink-faint">
                     {formatCompactAge(Math.max(0, Math.floor(Date.now() / 1000) - p.openedAt))} ago

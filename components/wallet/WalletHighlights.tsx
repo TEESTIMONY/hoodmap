@@ -13,6 +13,7 @@ function TradeHighlight({
   trade?: ClosedTrade;
   positive: boolean;
 }) {
+  const hasUsd = trade?.realizedPnlUsd != null;
   return (
     <GlassPanel className="p-4">
       <div className="text-sm font-medium text-ink">{label}</div>
@@ -21,13 +22,24 @@ function TradeHighlight({
       ) : (
         <div className="mt-2">
           <div className={cn("text-lg font-semibold", positive ? "text-success" : "text-danger")}>
-            {positive ? "+" : ""}
-            {shortNumber(trade.realizedPnlQuote)} {trade.quoteToken.symbol}
+            {hasUsd
+              ? `${positive ? "+" : ""}$${shortNumber(Math.abs(trade.realizedPnlUsd!))}`
+              : `${positive ? "+" : ""}${shortNumber(trade.realizedPnlQuote)} ${trade.quoteToken.symbol}`}
           </div>
           <div className="mt-1 text-xs text-ink-faint">
+            {hasUsd && (
+              <>
+                {positive ? "+" : ""}
+                {shortNumber(trade.realizedPnlQuote)} {trade.quoteToken.symbol} ·{" "}
+              </>
+            )}
             {shortNumber(trade.quantity)} {trade.token.symbol} · bought at{" "}
-            {shortNumber(trade.buyPriceInQuote)} sold at {shortNumber(trade.sellPriceInQuote)}{" "}
-            {trade.quoteToken.symbol} · held {formatCompactAge(trade.holdSeconds)}
+            {trade.buyPriceUsd != null ? `$${shortNumber(trade.buyPriceUsd)}` : shortNumber(trade.buyPriceInQuote)}{" "}
+            sold at{" "}
+            {trade.sellPriceUsd != null
+              ? `$${shortNumber(trade.sellPriceUsd)}`
+              : `${shortNumber(trade.sellPriceInQuote)} ${trade.quoteToken.symbol}`}{" "}
+            · held {formatCompactAge(trade.holdSeconds)}
           </div>
         </div>
       )}
