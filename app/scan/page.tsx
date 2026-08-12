@@ -40,7 +40,6 @@ const STEPS: { key: ProgressStep; label: string }[] = [
 function scanTabs(data: AnalysisResult): TabItem[] {
   return [
     { id: "overview", label: "Overview" },
-    { id: "chart", label: "Chart" },
     { id: "map", label: "HoodMap", count: data.graph.nodes.length },
     { id: "whales", label: "Whales", count: data.whales.length },
     { id: "transactions", label: "Transactions", count: data.transfers.length },
@@ -63,7 +62,7 @@ function AddressFromQuery({ onAddress }: { onAddress: (address: string) => void 
   return null;
 }
 
-type ScanTab = "overview" | "chart" | "map" | "whales" | "transactions" | "summary";
+type ScanTab = "overview" | "map" | "whales" | "transactions" | "summary";
 
 export default function ScanPage() {
   const [address, setAddress] = useState("");
@@ -205,12 +204,22 @@ export default function ScanPage() {
         {state.kind === "ready" && (
           <div className="mt-6 flex flex-col gap-5">
             {/* Always visible — context you need before you've even picked a
-                tab, not buried a click away. Everything else (chart, map,
-                whale/transaction tables, summary) used to stack endlessly
-                below this; it's now one section at a time via tabs. */}
+                tab, not buried a click away. */}
             <TokenHeader token={state.data.token} />
             <WarningsBanner warnings={state.data.warnings} />
-            <ScoreCard score={state.data.hoodScore} />
+
+            {/* Chart is a permanent panel, not a tab — you shouldn't have to
+                click away from price action to see whale/cluster data and
+                back again. It sits beside the HoodScore card the same way a
+                trading terminal pairs its chart with the order panel: the
+                two things worth seeing side-by-side, before you pick a tab
+                for anything else (map, whales, transactions, summary). */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+              <div className="lg:col-span-2">
+                <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
+              </div>
+              <ScoreCard score={state.data.hoodScore} />
+            </div>
 
             <Tabs tabs={scanTabs(state.data)} active={tab} onChange={(id) => setTab(id as ScanTab)} />
 
@@ -223,10 +232,6 @@ export default function ScanPage() {
                     <ClusterCards groups={state.data.groups} />
                   </div>
                 </div>
-              )}
-
-              {tab === "chart" && (
-                <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
               )}
 
               {tab === "map" && (
