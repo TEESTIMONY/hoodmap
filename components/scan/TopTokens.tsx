@@ -7,6 +7,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { BubbleLoader } from "@/components/scan/BubbleLoader";
 import { discoverTrendingTokensServer, fetchDexScreenerTokenServer } from "@/lib/scan/actions";
+import { friendlyErrorMessage } from "@/lib/scan/validate";
 import type { DexPairData } from "@/lib/scan/dexscreener";
 import type { TrendingToken } from "@/lib/scan/discover.server";
 import { shortNumber } from "@/lib/scan/adapter";
@@ -69,7 +70,7 @@ export function TopTokens({
         setRows([...enriched, ...tokens.slice(i + ENRICH_CONCURRENCY).map((t) => ({ ...t, dex: null }))]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load trending tokens.");
+      setError(friendlyErrorMessage(err, "Couldn't load trending tokens right now. Please try again in a moment."));
       setLoading(false);
     } finally {
       setEnriching(false);

@@ -20,6 +20,7 @@ import { TransfersList } from "@/components/scan/TransfersList";
 import { SummaryFooter } from "@/components/scan/SummaryFooter";
 import { TopTokens } from "@/components/scan/TopTokens";
 import { analyzeToken, type ProgressStep } from "@/lib/scan/adapter";
+import { friendlyErrorMessage } from "@/lib/scan/validate";
 import type { AnalysisResult } from "@/lib/scan/types";
 
 // Extends the Server Action timeout for this page beyond whatever a
@@ -91,7 +92,10 @@ export default function ScanPage() {
       setState({ kind: "ready", data });
       setProgress(null);
     } catch (err) {
-      setState({ kind: "error", message: err instanceof Error ? err.message : "Scan failed." });
+      setState({
+        kind: "error",
+        message: friendlyErrorMessage(err, "Something went wrong scanning this token. Please try again in a moment."),
+      });
       setProgress(null);
     }
   }

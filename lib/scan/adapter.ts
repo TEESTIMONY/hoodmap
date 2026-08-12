@@ -4,6 +4,7 @@
 
 import { getAddress } from "viem";
 import { analyzeTokenServer, fetchDexScreenerTokenServer } from "./actions";
+import { INVALID_CONTRACT_ADDRESS_MESSAGE } from "./validate";
 import type { AnalysisResult } from "./types";
 
 export type ProgressStep = "validating" | "onchain" | "market" | "rendering" | "done";
@@ -23,7 +24,7 @@ export async function analyzeToken(
     // getAddress normalizes all-lowercase input and rejects an invalid mixed-case checksum.
     clean = getAddress(address.trim());
   } catch {
-    throw new Error("That doesn't look like a valid Robinhood Chain contract address.");
+    throw new Error(INVALID_CONTRACT_ADDRESS_MESSAGE);
   }
 
   // Kick off both in parallel — the server action does the heavy on-chain

@@ -12,7 +12,7 @@ import { ClosedTradesTable } from "@/components/wallet/ClosedTradesTable";
 import { WalletTransfersTable } from "@/components/wallet/WalletTransfersTable";
 import { BubbleLoader } from "@/components/scan/BubbleLoader";
 import { analyzeWalletServer } from "@/lib/scan/actions";
-import { isPlausibleAddress, INVALID_WALLET_ADDRESS_MESSAGE } from "@/lib/scan/validate";
+import { isPlausibleAddress, INVALID_WALLET_ADDRESS_MESSAGE, friendlyErrorMessage } from "@/lib/scan/validate";
 import type { WalletPnlSummary } from "@/lib/scan/wallet-types";
 
 // See the matching comment on the token scan page — analyzeWalletServer can
@@ -62,7 +62,7 @@ export default function WalletScanPage() {
     } catch (err) {
       setState({
         kind: "error",
-        message: err instanceof Error ? err.message : "Wallet scan failed.",
+        message: friendlyErrorMessage(err, "Something went wrong loading this wallet. Please try again in a moment."),
       });
     }
   }

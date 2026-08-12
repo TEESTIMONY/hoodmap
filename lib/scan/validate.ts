@@ -25,3 +25,28 @@ export const INVALID_WALLET_ADDRESS_MESSAGE =
 export function isPlausibleAddress(a: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(a.trim());
 }
+
+// Messages authored HERE, client-side, meant to reach the user verbatim.
+// Anything else caught from a scan is almost always a Server Action that
+// threw — confirmed live (see git history around the wallet-500 fix):
+// Next.js redacts a thrown Error's message in production, substituting
+// its own generic text that names internal framework concepts a normal
+// user has no reason to see ("An error occurred in the Server Components
+// render... A digest property is included..."). There's no way to tell,
+// client-side, whether a caught message is one of ours that survived
+// (only true for errors that never crossed the server boundary, like the
+// address-format checks above) or Next's redacted substitute — both
+// arrive as an ordinary Error. An ALLOWLIST (not a denylist) means any
+// new/unexpected error automatically falls back to something plain
+// instead of needing to be recognized and excluded after the fact.
+const SAFE_TO_SHOW_MESSAGES = new Set<string>([
+  INVALID_WALLET_ADDRESS_MESSAGE,
+  INVALID_CONTRACT_ADDRESS_MESSAGE,
+]);
+
+export function friendlyErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && SAFE_TO_SHOW_MESSAGES.has(err.message)) {
+    return err.message;
+  }
+  return fallback;
+}
