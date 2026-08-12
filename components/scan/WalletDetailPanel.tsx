@@ -82,7 +82,7 @@ export function WalletDetailPanel({
     usd != null ? `$${shortNumber(usd)}` : `${shortNumber(amount)} ${tokenSymbol ?? ""}`;
 
   return (
-    <div className="mt-3 rounded-xl border border-line bg-white/[0.03] p-4 animate-fade-up">
+    <div className="mt-3 rounded-[8px] border border-line bg-white/[0.03] p-4 animate-fade-up">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
@@ -104,17 +104,17 @@ export function WalletDetailPanel({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-        <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+        <div className="rounded-[8px] bg-white/[0.03] px-3 py-2">
           <div className="text-sm font-semibold text-ink">{wallet.pctSupply.toFixed(2)}%</div>
           <div className="text-[11px] text-ink-faint">Of supply</div>
         </div>
-        <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+        <div className="rounded-[8px] bg-white/[0.03] px-3 py-2">
           <div className="text-sm font-semibold text-ink">
             {shortNumber(wallet.balance)} {tokenSymbol ?? ""}
           </div>
           <div className="text-[11px] text-ink-faint">Amount held</div>
         </div>
-        <div className="rounded-lg bg-white/[0.03] px-3 py-2">
+        <div className="rounded-[8px] bg-white/[0.03] px-3 py-2">
           <div className="text-sm font-semibold text-ink">
             {usdValue != null ? `$${shortNumber(usdValue)}` : "—"}
           </div>
@@ -123,7 +123,7 @@ export function WalletDetailPanel({
       </div>
 
       {group && (
-        <div className="mt-2.5 flex items-center justify-between rounded-lg bg-white/[0.04] px-3 py-2">
+        <div className="mt-2.5 flex items-center justify-between rounded-[8px] bg-white/[0.04] px-3 py-2">
           <span className="text-xs text-ink-muted">
             Cluster Supply: <span className="font-semibold text-ink">{group.pctSupply.toFixed(2)}%</span>
             <span className="ml-1.5 text-ink-faint">({group.label})</span>
@@ -142,7 +142,7 @@ export function WalletDetailPanel({
             { dir: "out" as const, entries: outEntries, total: outTotal, usd: outUsd, addrCount: outAddressCount },
           ] as const
         ).map((row) => (
-          <div key={row.dir} className="rounded-lg border border-line">
+          <div key={row.dir} className="rounded-[8px] border border-line">
             <button
               onClick={() => setExpanded((cur) => (cur === row.dir ? null : row.dir))}
               disabled={row.entries.length === 0}

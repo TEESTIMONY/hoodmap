@@ -315,7 +315,7 @@ export function HoodMapView({
         ref={containerRef}
         onMouseDown={onCanvasMouseDown}
         className={cn(
-          "relative overflow-hidden rounded-xl bg-canvas/40",
+          "relative overflow-hidden rounded-[10px] bg-canvas/40",
           isPanning ? "cursor-grabbing" : "cursor-grab",
         )}
         style={{ height: CANVAS_HEIGHT, touchAction: "none" }}

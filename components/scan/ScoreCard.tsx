@@ -16,28 +16,34 @@ const SIGNAL_DOT: Record<"good" | "warn" | "bad", string> = {
   bad: "bg-danger",
 };
 
+// Lives in a narrow, always-vertical sidebar column now (paired beside the
+// chart) rather than a full-width slot — so this deliberately doesn't use
+// sm: breakpoints to go horizontal/two-column the way it used to. A 640px
+// viewport breakpoint has no idea the column itself is ~280px wide; letting
+// it "widen up" here just cramped the grade box against the text and wrapped
+// signal tiles into a 2-column grid with no room, in a column this narrow.
 export function ScoreCard({ score }: { score: HoodScore }) {
   return (
-    <GlassPanel className="p-5">
-      <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+    <GlassPanel className="p-4">
+      <div className="flex flex-col items-center gap-3 text-center">
         <div
           className={cn(
-            "flex h-24 w-24 shrink-0 flex-col items-center justify-center rounded-lg border",
+            "flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-[8px] border",
             GRADE_STYLE[score.grade],
           )}
         >
-          <div className="text-3xl font-bold leading-none">{score.grade}</div>
+          <div className="text-2xl font-bold leading-none">{score.grade}</div>
           <div className="mt-1 text-xs opacity-80">{score.score}/100</div>
         </div>
         <div className="min-w-0">
-          <div className="text-lg font-semibold text-ink">{score.category}</div>
-          <p className="mt-1 text-sm leading-relaxed text-ink-muted">{score.reason}</p>
+          <div className="text-sm font-semibold text-ink">{score.category}</div>
+          <p className="mt-1 text-xs leading-relaxed text-ink-muted">{score.reason}</p>
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="mt-3 flex flex-col gap-1.5">
         {score.signals.map((signal, i) => (
-          <div key={i} className="flex items-start gap-2 rounded-lg bg-white/[0.03] px-3 py-2">
+          <div key={i} className="flex items-start gap-2 rounded-[8px] bg-white/[0.03] px-2.5 py-1.5">
             <span className={cn("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", SIGNAL_DOT[signal.kind])} />
             <div className="min-w-0">
               <div className="text-xs text-ink-muted">{signal.label}</div>

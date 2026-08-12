@@ -16,7 +16,7 @@ export function MiniConstellation({ centerId }: { centerId: string }) {
   const positions = computeConstellationLayout(centerId, nodePeople, relevantEdges);
 
   return (
-    <div className="glass-panel relative h-72 overflow-hidden rounded-2xl">
+    <div className="glass-panel relative h-72 overflow-hidden rounded-[10px]">
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
         {relevantEdges.map((edge, i) => {
           const a = positions.get(edge.from);

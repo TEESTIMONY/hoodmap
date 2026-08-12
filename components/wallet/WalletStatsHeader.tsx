@@ -40,7 +40,7 @@ export function WalletStatsHeader({
         <button
           onClick={onToggleTransfers}
           aria-expanded={transfersExpanded}
-          className="glass-panel flex items-center justify-between rounded-xl px-4 py-3 text-left transition hover:border-line-strong"
+          className="glass-panel flex items-center justify-between rounded-[8px] px-4 py-3 text-left transition hover:border-line-strong"
         >
           <div>
             <div className="text-lg font-semibold text-ink">{summary.totalTransfersScanned}</div>
@@ -59,7 +59,7 @@ export function WalletStatsHeader({
           value={summary.totalTrades > 0 ? `${summary.winRate.toFixed(0)}%` : "—"}
         />
         <StatCard label="Avg hold time" value={formatCompactAge(summary.avgHoldSeconds)} />
-        <div className="glass-panel rounded-xl px-4 py-3">
+        <div className="glass-panel rounded-[8px] px-4 py-3">
           <div
             className={cn(
               "flex items-center gap-1 text-lg font-semibold",

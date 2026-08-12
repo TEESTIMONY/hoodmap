@@ -16,7 +16,7 @@ export function WarningsBanner({ warnings }: { warnings: AnalysisWarning[] }) {
         <div
           key={i}
           className={cn(
-            "flex items-start gap-2 rounded-xl border px-3 py-2 text-xs",
+            "flex items-start gap-2 rounded-[8px] border px-3 py-2 text-xs",
             SEVERITY_STYLE[w.severity],
           )}
         >

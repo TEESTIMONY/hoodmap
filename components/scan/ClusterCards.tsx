@@ -17,7 +17,7 @@ export function ClusterCards({ groups }: { groups: WalletGroup[] }) {
       ) : (
         <div className="flex flex-col gap-3">
           {groups.map((g) => (
-            <div key={g.id} className="rounded-xl border border-line bg-white/[0.03] p-3">
+            <div key={g.id} className="rounded-[8px] border border-line bg-white/[0.03] p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm text-ink">{g.label}</span>
                 <span

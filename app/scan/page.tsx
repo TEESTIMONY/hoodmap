@@ -119,7 +119,7 @@ export default function ScanPage() {
         <AddressFromQuery onAddress={onAddressFromQuery} />
       </Suspense>
 
-      <div className={`mx-auto ${hasResult ? "max-w-6xl" : "max-w-3xl pt-[6vh]"}`}>
+      <div className={`mx-auto ${hasResult ? "max-w-[1500px]" : "max-w-3xl pt-[6vh]"}`}>
         {!hasResult && (
           <div className="mb-8 text-center animate-fade-up">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lime to-moss shadow-[var(--shadow-glow-lime)]">
@@ -208,49 +208,51 @@ export default function ScanPage() {
             <TokenHeader token={state.data.token} />
             <WarningsBanner warnings={state.data.warnings} />
 
-            {/* Chart is a permanent panel, not a tab — you shouldn't have to
-                click away from price action to see whale/cluster data and
-                back again. It sits beside the HoodScore card the same way a
-                trading terminal pairs its chart with the order panel: the
-                two things worth seeing side-by-side, before you pick a tab
-                for anything else (map, whales, transactions, summary). */}
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-              <div className="lg:col-span-2">
+            {/* DexScreener-style L-shape: chart + its tabs/table live in one
+                wide left column so "transactions/whales/map" sit directly
+                under the chart, not spread under the sidebar too. The
+                HoodScore card is a narrow, always-visible right rail next to
+                both — dense stat-sidebar territory, not a wide card. */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
+              <div className="flex flex-col gap-5 lg:col-span-3">
                 <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
-              </div>
-              <ScoreCard score={state.data.hoodScore} />
-            </div>
 
-            <Tabs tabs={scanTabs(state.data)} active={tab} onChange={(id) => setTab(id as ScanTab)} />
+                <Tabs tabs={scanTabs(state.data)} active={tab} onChange={(id) => setTab(id as ScanTab)} />
 
-            <div className="animate-fade-up">
-              {tab === "overview" && (
-                <div className="flex flex-col gap-5">
-                  <HealthGrid metrics={state.data.health} />
-                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-                    <HolderDistribution buckets={state.data.holderDistribution} />
-                    <ClusterCards groups={state.data.groups} />
-                  </div>
+                <div className="animate-fade-up">
+                  {tab === "overview" && (
+                    <div className="flex flex-col gap-5">
+                      <HealthGrid metrics={state.data.health} />
+                      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                        <HolderDistribution buckets={state.data.holderDistribution} />
+                        <ClusterCards groups={state.data.groups} />
+                      </div>
+                    </div>
+                  )}
+
+                  {tab === "map" && (
+                    <HoodMapView
+                      nodes={state.data.graph.nodes}
+                      groups={state.data.groups}
+                      allTransfers={state.data.allTransfers}
+                      tokenPriceUsd={state.data.token.priceUsd}
+                      tokenSymbol={state.data.token.symbol}
+                    />
+                  )}
+
+                  {tab === "whales" && <WhaleTable whales={state.data.whales} />}
+
+                  {tab === "transactions" && <TransfersList transfers={state.data.transfers} />}
+
+                  {tab === "summary" && (
+                    <SummaryFooter aiSummary={state.data.aiSummary} dataSources={state.data.dataSources} />
+                  )}
                 </div>
-              )}
+              </div>
 
-              {tab === "map" && (
-                <HoodMapView
-                  nodes={state.data.graph.nodes}
-                  groups={state.data.groups}
-                  allTransfers={state.data.allTransfers}
-                  tokenPriceUsd={state.data.token.priceUsd}
-                  tokenSymbol={state.data.token.symbol}
-                />
-              )}
-
-              {tab === "whales" && <WhaleTable whales={state.data.whales} />}
-
-              {tab === "transactions" && <TransfersList transfers={state.data.transfers} />}
-
-              {tab === "summary" && (
-                <SummaryFooter aiSummary={state.data.aiSummary} dataSources={state.data.dataSources} />
-              )}
+              <div className="lg:col-span-1">
+                <ScoreCard score={state.data.hoodScore} />
+              </div>
             </div>
           </div>
         )}
@@ -261,7 +263,7 @@ export default function ScanPage() {
           type="button"
           onClick={() => setTopTokensOpen((v) => !v)}
           aria-expanded={topTokensOpen}
-          className="glass-panel flex w-full items-center justify-between rounded-lg px-4 py-3 text-left transition hover:border-line-strong"
+          className="glass-panel flex w-full items-center justify-between rounded-[10px] px-4 py-3 text-left transition hover:border-line-strong"
         >
           <span className="flex items-center gap-2 text-sm font-medium text-ink">
             <TrendingUp className="h-4 w-4 text-lime-soft" />

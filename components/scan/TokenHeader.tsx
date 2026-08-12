@@ -63,7 +63,7 @@ export function TokenHeader({ token }: { token: TokenMeta }) {
           label="Liquidity"
           value={token.liquidityUsd != null ? `$${shortNumber(token.liquidityUsd)}` : "—"}
         />
-        <div className="glass-panel rounded-xl px-4 py-3">
+        <div className="glass-panel rounded-[8px] px-4 py-3">
           <div
             className={cn(
               "flex items-center gap-1 text-lg font-semibold",

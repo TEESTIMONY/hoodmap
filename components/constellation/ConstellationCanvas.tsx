@@ -218,7 +218,7 @@ export function ConstellationCanvas() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.94 }}
               transition={{ duration: 0.18 }}
-              className="glass-panel absolute z-20 w-64 rounded-2xl p-4 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.6)]"
+              className="glass-panel absolute z-20 w-64 rounded-[10px] p-4 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.6)]"
               style={{
                 left: `${Math.min(78, Math.max(10, selectedPos.x))}%`,
                 top: `${Math.min(78, Math.max(6, selectedPos.y))}%`,
@@ -269,7 +269,7 @@ export function ConstellationCanvas() {
 
       {/* Side panel */}
       <div className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto p-4 lg:w-80">
-        <div className="glass-panel rounded-2xl p-4">
+        <div className="glass-panel rounded-[10px] p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium text-ink">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-moss opacity-75" />
@@ -299,7 +299,7 @@ export function ConstellationCanvas() {
           </div>
         </div>
 
-        <div className="glass-panel rounded-2xl p-4">
+        <div className="glass-panel rounded-[10px] p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium text-ink">
             <Trophy className="h-4 w-4 text-warning" />
             Most signaled today
