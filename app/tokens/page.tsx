@@ -23,7 +23,8 @@ export default function TokensPage() {
               Top memecoins on Robinhood Chain
             </h1>
             <p className="text-sm text-ink-faint">
-              Up to 100 tokens ranked by unique wallets observed transacting on-chain.
+              Up to 100 tokens ranked by 24h trading volume, or recent on-chain activity as a
+              fallback.
             </p>
           </div>
         </div>

@@ -28,31 +28,52 @@ export function WhaleTable({ whales }: { whales: WhaleRow[] }) {
       {whales.length === 0 ? (
         <p className="text-xs text-ink-faint">No whale-sized holders observed in this window.</p>
       ) : (
-        <div className="flex flex-col divide-y divide-line">
-          {whales.map((w) => (
-            <div key={w.address} className="flex flex-wrap items-center gap-2 py-2.5 first:pt-0 last:pb-0">
-              {w.rank != null && (
-                <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-ink-faint">
-                  #{w.rank}
-                </span>
-              )}
-              <span className={cn("h-2 w-2 shrink-0 rounded-full", ROLE_DOT_CLASS[w.role])} />
-              <span className="font-mono text-xs text-ink">{shortAddress(w.address)}</span>
-              <div className="flex flex-wrap gap-1">
-                {w.labels.map((l) => (
-                  <Chip key={l} className="px-2 py-0.5 text-[10px]">
-                    {l}
-                  </Chip>
-                ))}
-              </div>
-              <div className="ml-auto flex items-center gap-3 text-xs text-ink-faint">
-                <span className="text-ink-muted">{formatPct(w.pctSupply)}</span>
-                <span>{w.nativeBalance == null ? "— ETH (unavailable)" : `${shortNumber(w.nativeBalance)} ETH`}</span>
-                <span>{formatCompactNumber(w.connectedWallets)} links</span>
-                <span>{formatCompactNumber(w.recentTxs)} txs</span>
-              </div>
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
+                <th className="px-2 py-2 font-medium">#</th>
+                <th className="px-2 py-2 font-medium">Wallet</th>
+                <th className="px-2 py-2 font-medium">Labels</th>
+                <th className="px-2 py-2 text-right font-medium">% supply</th>
+                <th className="px-2 py-2 text-right font-medium">ETH balance</th>
+                <th className="px-2 py-2 text-right font-medium">Links</th>
+                <th className="px-4 py-2 text-right font-medium">Txs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {whales.map((w) => (
+                <tr key={w.address} className="border-b border-line/60 transition last:border-0 hover:bg-white/[0.02]">
+                  <td className="px-2 py-2.5 text-ink-faint">{w.rank != null ? `#${w.rank}` : "—"}</td>
+                  <td className="px-2 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className={cn("h-2 w-2 shrink-0 rounded-full", ROLE_DOT_CLASS[w.role])} />
+                      <span className="font-mono text-xs text-ink">{shortAddress(w.address)}</span>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2.5">
+                    <div className="flex flex-wrap gap-1">
+                      {w.labels.map((l) => (
+                        <Chip key={l} className="px-2 py-0.5 text-[10px]">
+                          {l}
+                        </Chip>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2.5 text-right text-ink-muted">{formatPct(w.pctSupply)}</td>
+                  <td className="px-2 py-2.5 text-right text-ink-muted">
+                    {w.nativeBalance == null ? (
+                      <span className="text-ink-faint">unavailable</span>
+                    ) : (
+                      `${shortNumber(w.nativeBalance)} ETH`
+                    )}
+                  </td>
+                  <td className="px-2 py-2.5 text-right text-ink-faint">{formatCompactNumber(w.connectedWallets)}</td>
+                  <td className="px-4 py-2.5 text-right text-ink-faint">{formatCompactNumber(w.recentTxs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </GlassPanel>
