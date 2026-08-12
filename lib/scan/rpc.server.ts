@@ -257,7 +257,16 @@ export async function fetchTransferLogs(
     );
     outer: for (const logs of results) {
       for (const l of logs as (Log & { args?: { from: Address; to: Address; value: bigint } })[]) {
-        if (!l.args) continue;
+        // A log matching the Transfer topic signature doesn't guarantee a
+        // fully-decoded `value` — a malformed or non-standard token's log
+        // can leave `l.args` truthy with `value` still undefined. That
+        // silently produced `valueRaw: undefined`, which crashed
+        // downstream (formatUnits) with no indication of which token or
+        // wallet caused it — confirmed live, a real wallet trading against
+        // enough different pools eventually hit one. Skip rather than
+        // propagate malformed data, same discipline as worker.ts's own
+        // ingest-time filter.
+        if (!l.args?.from || !l.args?.to || l.args.value == null) continue;
         out.push({
           from: l.args.from,
           to: l.args.to,
@@ -358,7 +367,9 @@ export async function fetchWalletTransferLogs(
     );
     for (const logs of results) {
       for (const l of logs as (Log & { args?: { from: Address; to: Address; value: bigint } })[]) {
-        if (!l.args) continue;
+        // See the matching comment in fetchTransferLogs above — `l.args`
+        // being truthy doesn't guarantee `value` decoded successfully.
+        if (!l.args?.from || !l.args?.to || l.args.value == null) continue;
         out.push({
           token: l.address,
           from: l.args.from,
