@@ -3,43 +3,52 @@
 // this in bounds the caller's own live tiered loop instead of replacing the
 // (currently well-tested) PnL reconstruction pipeline downstream of it.
 //
-// Behavior:
-// - First-ever lookup for this wallet: registers it for background
+// Behavior, tried in this order:
+// - Blockscout (blockscout-full / blockscout-partial): the chain's
+//   official indexer, tried first when BLOCKSCOUT_API_KEY is configured.
+//   Paginated, so it doesn't share the live RPC scanner's failure mode
+//   against a hyperactive address (confirmed live: Uniswap v4's own
+//   PoolManager singleton failed 120/120 raw eth_getLogs fetches under the
+//   old scanner). "full" when pagination completed on its own;
+//   "partial" when it hit its own page cap first, in which case
+//   dbCoverageFromBlock tells the caller how far back is covered so its
+//   own tiered live top-up only needs to reach further than that.
+// - DB (db-full / db-partial), when Blockscout isn't configured or fails:
+//   First-ever lookup for this wallet registers it for background
 //   backfill (see trackedWallets/wallet-backfill.ts) as a side effect —
 //   this itself makes it "tracked" immediately, so the result comes back
 //   as source:"db-partial" with dbCoverageFromBlock essentially "now" (no
-//   real history accumulated yet). Practically indistinguishable from a
-//   pure live scan for THIS request, but every scan after this one
-//   benefits from whatever the background job accumulates in the
-//   meantime.
-// - Backfill still in progress (db-partial, with real coverage): returns
-//   everything stored so far (real, permanent, from wherever backfill has
-//   reached to the present) and tells the caller how far back that
-//   coverage is reliable (dbCoverageFromBlock) — the caller's own tiered
-//   live scan should only need to cover older blocks than that, never redo
-//   what the DB already has.
-// - Backfill complete (db-full): the DB genuinely holds this wallet's
-//   entire history back to genesis (dbCoverageFromBlock = 0n) — the caller
-//   doesn't need its own tiered scan at all, just this function's result.
-// - source:"rpc-only" happens only when DATABASE_URL isn't configured or
-//   the DB errors — a database problem must never be the reason a wallet
-//   scan fails, same safety pattern as every other hybrid module in this
-//   directory.
+//   real history accumulated yet). Backfill still in progress returns
+//   everything stored so far plus how far back it's reliable; backfill
+//   complete means the DB genuinely holds this wallet's entire history
+//   back to genesis (dbCoverageFromBlock = 0n) and the caller's own tiered
+//   scan isn't needed at all.
+// - source:"rpc-only" happens only when neither Blockscout nor the DB is
+//   configured/available — a third-party data source problem must never
+//   be the reason a wallet scan fails, same safety pattern as every other
+//   hybrid module in this directory.
 import { getAddress, type Address } from "viem";
 import { fetchWalletTransferLogs, getLatestBlockNumber, type RawWalletTransfer } from "@/lib/scan/rpc.server";
+import { blockscoutConfigured } from "@/lib/blockscout/client";
+import { fetchWalletTransfersBlockscout, type BlockscoutTokenMeta } from "@/lib/blockscout/wallet-transfers";
 import { trackWallet, getTrackedWalletStatus, getTrackedWalletTransfers } from "./queries";
 import { db as getDb } from "./db";
 
 export interface HybridWalletResult {
   transfers: RawWalletTransfer[];
-  source: "db-full" | "db-partial" | "rpc-only";
-  // How far back the DB's contribution is genuinely, completely reliable —
-  // callers doing their own live top-up for older history should fetch
-  // only blocks strictly older than this, not re-cover it. null when
-  // there's no DB contribution at all (rpc-only).
+  source: "blockscout-full" | "blockscout-partial" | "db-full" | "db-partial" | "rpc-only";
+  // How far back this result's contribution is genuinely, completely
+  // reliable — callers doing their own live top-up for older history
+  // should fetch only blocks strictly older than this, not re-cover it.
+  // null when there's no indexed contribution at all (rpc-only).
   dbCoverageFromBlock: bigint | null;
   failedFetches: number;
   totalFetches: number;
+  // Token symbol/decimals Blockscout already returned alongside the
+  // transfers themselves — lets the caller skip a live RPC metadata call
+  // for any token already covered here. Empty for the DB/live-RPC path,
+  // which has no equivalent free metadata to offer.
+  tokenMetadata: Map<string, BlockscoutTokenMeta>;
 }
 
 const EMPTY_RESULT: HybridWalletResult = {
@@ -48,6 +57,7 @@ const EMPTY_RESULT: HybridWalletResult = {
   dbCoverageFromBlock: null,
   failedFetches: 0,
   totalFetches: 0,
+  tokenMetadata: new Map(),
 };
 
 function rowToRawTransfer(
@@ -74,6 +84,31 @@ function rowToRawTransfer(
 const TAIL_MAX_LOGS = 2_000;
 
 export async function resolveWalletTransfersHybrid(wallet: string): Promise<HybridWalletResult> {
+  if (blockscoutConfigured()) {
+    try {
+      const { transfers, truncated, tokenMetadata } = await fetchWalletTransfersBlockscout(wallet);
+      // Pagination returns newest-first — the floor of what got covered is
+      // the oldest block actually reached, not block 0, whenever the page
+      // cap was hit before pagination ran out on its own.
+      const dbCoverageFromBlock = truncated
+        ? transfers.reduce((min, t) => (t.blockNumber < min ? t.blockNumber : min), transfers[0]?.blockNumber ?? 0n)
+        : 0n;
+      return {
+        transfers,
+        source: truncated ? "blockscout-partial" : "blockscout-full",
+        dbCoverageFromBlock,
+        failedFetches: 0,
+        totalFetches: 0,
+        tokenMetadata,
+      };
+    } catch {
+      // Blockscout unreachable/misconfigured/rate-limited — fall through
+      // to the DB/live-RPC path below exactly as if it had never been
+      // configured. A third-party data source problem must never be the
+      // reason a wallet scan fails.
+    }
+  }
+
   if (!process.env.DATABASE_URL) return EMPTY_RESULT;
 
   const address = getAddress(wallet);
@@ -127,6 +162,7 @@ export async function resolveWalletTransfersHybrid(wallet: string): Promise<Hybr
       dbCoverageFromBlock,
       failedFetches: tail.failedFetches,
       totalFetches: tail.totalFetches,
+      tokenMetadata: new Map(),
     };
   } catch {
     return EMPTY_RESULT;

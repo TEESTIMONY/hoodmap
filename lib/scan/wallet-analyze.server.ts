@@ -18,6 +18,8 @@ import {
 } from "./rpc.server";
 import { fetchDexScreenerToken } from "./dexscreener";
 import { resolveWalletTransfersHybrid } from "@/lib/indexer/hybrid-wallet-transfers";
+import { blockscoutConfigured } from "@/lib/blockscout/client";
+import { detectSwaps } from "@/lib/blockscout/swaps";
 import { cached } from "./cache.server";
 import { reconstructTrades, type WalletTransferLeg } from "./wallet-pnl";
 import type {
@@ -73,6 +75,15 @@ const METADATA_CONCURRENCY = 5;
 // honestly to the user via the existing failedFetches note below, not
 // silently hidden, but it's a real limitation worth knowing about.
 const MAX_WALLET_TRANSFER_LOGS = 250;
+// Caps the Blockscout swap-confirmation pass (see detectSwaps in
+// lib/blockscout/swaps.ts) — it's one API call (20 credits) per DISTINCT
+// transaction touching this wallet, so an unbounded check on a very active
+// wallet could burn a large slice of the free tier's daily credit budget
+// in a single scan. 50 checks (1,000 credits) is enough to meaningfully
+// improve trade-detection accuracy for a typical wallet without that risk;
+// the most recent transactions are checked first since those are the ones
+// most likely to matter to someone looking at this wallet right now.
+const MAX_SWAP_CHECKS = 50;
 
 export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSummary> {
   const wallet = getAddress(rawAddress);
@@ -168,6 +179,23 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
     return (from === walletLower) !== (to === walletLower);
   });
 
+  // Definitive swap confirmation from Robinhood Chain's real Uniswap v4
+  // deployment (see lib/blockscout/swaps.ts) — a hard signal ("this
+  // transaction really executed a swap on-chain"), unlike
+  // reconstructTrades' own heuristic below (pairing legs against an
+  // auto-detected reference asset), which can't tell a real swap from a
+  // plain transfer when neither side of it happens to look like a
+  // reference asset from this wallet's own history alone. Not used to
+  // change the pricing math itself (that still needs a recognized
+  // reference asset to compute a price against) — used only to report,
+  // honestly, how many of this wallet's transactions really were trades
+  // even when they couldn't be priced, instead of lumping them in
+  // silently with plain transfers.
+  const recentTxHashesForSwapCheck = Array.from(new Set(relevant.map((t) => t.txHash))).slice(0, MAX_SWAP_CHECKS);
+  const confirmedSwaps = blockscoutConfigured()
+    ? await detectSwaps(recentTxHashesForSwapCheck).catch(() => new Map())
+    : new Map();
+
   const uniqueTokens = Array.from(new Set(relevant.map((t) => t.token.toLowerCase())));
   if (!uniqueTokens.includes(weth)) uniqueTokens.push(weth);
 
@@ -181,8 +209,22 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
   const decimalsByToken = new Map<string, number>();
   const metaByToken = new Map<string, { symbol: string; decimals: number }>();
   const failedTokens = new Set<string>();
-  for (let i = 0; i < uniqueTokens.length; i += METADATA_CONCURRENCY) {
-    const slice = uniqueTokens.slice(i, i + METADATA_CONCURRENCY);
+
+  // Pre-seed from whatever Blockscout already returned alongside the
+  // transfers themselves — free, no extra RPC call. Confirmed live this
+  // matters, not just in theory: scanning an address that touches nearly
+  // every token on the chain (Uniswap v4's own PoolManager) took 5+
+  // minutes end to end specifically because this live-RPC resolution loop
+  // couldn't keep up with that many distinct tokens. Only tokens actually
+  // MISSING from Blockscout's response still need a live lookup below.
+  for (const [addr, meta] of hybrid.tokenMetadata) {
+    decimalsByToken.set(addr, meta.decimals);
+    metaByToken.set(addr, meta);
+  }
+  const tokensNeedingLiveMetadata = uniqueTokens.filter((addr) => !hybrid.tokenMetadata.has(addr));
+
+  for (let i = 0; i < tokensNeedingLiveMetadata.length; i += METADATA_CONCURRENCY) {
+    const slice = tokensNeedingLiveMetadata.slice(i, i + METADATA_CONCURRENCY);
     const metas = await Promise.all(
       slice.map((addr) =>
         readTokenDecimalsAndSymbolStrict(addr)
@@ -375,7 +417,15 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
       ? `Prices are derived from paired swap legs against a reference asset within the same transaction, auto-detected from this wallet's own trading pattern (${quoteSymbols.join(", ")}) — accurate at trade time. USD totals use each reference asset's current rate, not its historical rate at each trade.`
       : "No trades in this scan window paired against a recognizable reference asset, so nothing could be priced.",
   ];
-  if (hybrid.source === "db-full") {
+  if (hybrid.source === "blockscout-full") {
+    notes.push(
+      "This wallet's full transaction history, from Robinhood Chain's official indexer, is included — not limited to a recent scan window.",
+    );
+  } else if (hybrid.source === "blockscout-partial") {
+    notes.push(
+      `This wallet is unusually active — Robinhood Chain's official indexer returned history back to block ${hybrid.dbCoverageFromBlock!.toLocaleString()} before hitting this scan's own page cap. History before that block in this result comes from a live scan.`,
+    );
+  } else if (hybrid.source === "db-full") {
     notes.push(
       "This wallet's full transaction history, back to its very first on-chain activity, is indexed and included — not limited to a recent scan window.",
     );
@@ -387,6 +437,15 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
     notes.push(
       "This is this wallet's first lookup — it's now being indexed for permanent, full history on future scans. This result is from a live scan only.",
     );
+  }
+  if (confirmedSwaps.size > 0) {
+    const pricedTxHashes = new Set(closedTrades.flatMap((t) => [t.buyTxHash, t.sellTxHash]));
+    const confirmedNotPriced = Array.from(confirmedSwaps.keys()).filter((h) => !pricedTxHashes.has(h)).length;
+    if (confirmedNotPriced > 0) {
+      notes.push(
+        `Robinhood Chain's Uniswap v4 deployment confirms ${confirmedNotPriced} of this wallet's transaction(s) genuinely executed a swap, but couldn't be priced — neither side matched a detected reference asset. Counted among the unpriced transfers above, not silently treated as plain transfers.`,
+      );
+    }
   }
   if (relevant.length === 0) {
     const hitGenesis = fromBlock === 0n;

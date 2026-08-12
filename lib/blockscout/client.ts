@@ -34,6 +34,25 @@ export interface BlockscoutPage<T> {
   next_page_params: Record<string, string | number | boolean | null> | null;
 }
 
+// A single caller doing many sequential/concurrent calls (a paginated
+// wallet fetch, a batch of swap-detection lookups) can exceed the free
+// tier's 5 requests/second on its own, even with per-call pacing, since
+// there's no shared limiter across every Blockscout call in the app.
+// Confirmed live: a heavy wallet scan (~90 calls) immediately followed by
+// an unrelated wallet's scan caused the SECOND scan to hit repeated 429s
+// and timeouts. Retrying a fixed, short, conservative amount rather than
+// giving up immediately (or trusting x-ratelimit-reset's exact semantics,
+// which weren't fully confirmed — an observed value of "51475" doesn't
+// read as plain seconds-until-reset) turns a transient rate-limit window
+// into a brief delay instead of an immediate fall-through to the slower,
+// less reliable live-RPC path.
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1_500;
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
 export async function blockscoutGet<T>(
   path: string,
   params: Record<string, string | number | boolean | undefined> = {},
@@ -47,19 +66,37 @@ export async function blockscoutGet<T>(
     if (v != null) url.searchParams.set(k, String(v));
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const res = await fetch(url.toString(), { signal: controller.signal });
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), { signal: controller.signal });
+    } catch (err) {
+      // A timed-out request (AbortError, from the controller above) is
+      // exactly as transient/retryable as a 429 — a hung connection isn't
+      // evidence the wallet's data doesn't exist. Anything else (DNS
+      // failure, TLS error, etc.) isn't worth retrying the same way.
+      if (isAbortError(err) && attempt < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (res.status === 429 && attempt < MAX_RETRIES) {
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      continue;
+    }
     if (!res.ok) {
-      // Body included where cheap (credit exhaustion / rate limit responses
-      // are small JSON) — useful in logs without risking a huge body on an
-      // unexpected large error page.
+      // Body included where cheap (credit exhaustion / rate limit
+      // responses are small JSON) — useful in logs without risking a huge
+      // body on an unexpected large error page.
       const body = await res.text().catch(() => "");
       throw new BlockscoutError(`Blockscout API ${res.status} for ${path}: ${body.slice(0, 300)}`);
     }
     return (await res.json()) as T;
-  } finally {
-    clearTimeout(timeout);
   }
 }
