@@ -20,6 +20,7 @@ import { fetchDexScreenerToken } from "./dexscreener";
 import { resolveWalletTransfersHybrid } from "@/lib/indexer/hybrid-wallet-transfers";
 import { blockscoutConfigured } from "@/lib/blockscout/client";
 import { detectSwaps } from "@/lib/blockscout/swaps";
+import { fetchNativeTransfers, NATIVE_ETH_ADDRESS } from "@/lib/blockscout/native-transfers";
 import { cached } from "./cache.server";
 import { reconstructTrades, type WalletTransferLeg } from "./wallet-pnl";
 import type {
@@ -297,6 +298,47 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
     });
   }
 
+  // Native ETH legs — a token-for-ETH swap (as opposed to token-for-WETH)
+  // is otherwise entirely invisible here: native ETH never emits a
+  // Transfer event, so without this a real swap shows up as a single
+  // unpaired token leg and can never even become a "1 out + 1 in"
+  // candidate in reconstructTrades, regardless of quote-asset detection.
+  // Confirmed live against a real wallet before building this. Only
+  // available via Blockscout (the live-RPC path has no equivalent way to
+  // observe internal-transaction ETH movement cheaply) — a wallet on the
+  // DB/live-RPC fallback path simply doesn't get this improvement, same
+  // "can only add, never regress" shape as every other Blockscout tier.
+  //
+  // Gated on the PRIMARY transfer fetch having actually succeeded via
+  // Blockscout (hybrid.source), not just on a key being configured —
+  // confirmed live this matters: when the primary fetch had already
+  // fallen back to the DB/live-RPC path (Blockscout struggling for this
+  // wallet at that moment), still attempting two more paginated Blockscout
+  // calls on top of that compounded into a 39-minute scan. If Blockscout
+  // isn't working for this wallet right now, piling on more calls to it
+  // isn't worth the cost.
+  let nativeLegsAdded = 0;
+  if (hybrid.source.startsWith("blockscout")) {
+    try {
+      const { legs: nativeLegs } = await fetchNativeTransfers(wallet);
+      for (const n of nativeLegs) {
+        legs.push({
+          token: NATIVE_ETH_ADDRESS,
+          txHash: n.txHash,
+          blockNumber: Number(n.blockNumber),
+          timestamp: n.timestamp,
+          direction: n.direction,
+          amount: Number(formatUnits(n.amountWei, 18)),
+        });
+      }
+      nativeLegsAdded = nativeLegs.length;
+    } catch {
+      // Same discipline as every other Blockscout call in this file — a
+      // failure here degrades to "native ETH legs not included," not a
+      // failed scan.
+    }
+  }
+
   // Full raw activity list for the clickable transfers table — every
   // transfer found, not just the subset that priced as a trade. Doesn't
   // apply the same exclude-on-failure rules as `legs`: an "Unknown token" /
@@ -324,7 +366,12 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
   // trades to trigger the frequency-based auto-detection on its own; a
   // token whose own metadata failed can't be used as a quote leg (we
   // wouldn't be able to price against it), so it's excluded from the seed.
+  // Native ETH is seeded unconditionally the same way — its "metadata" is
+  // fixed (ETH, 18 decimals), never fetched, so there's no failure case to
+  // guard against.
   const seedQuoteTokens = new Set<string>(failedTokens.has(weth) ? [] : [weth]);
+  seedQuoteTokens.add(NATIVE_ETH_ADDRESS);
+  metaByToken.set(NATIVE_ETH_ADDRESS, { symbol: "ETH", decimals: 18 });
   const {
     closedTrades: rawClosed,
     openPositions: rawOpen,
@@ -436,6 +483,11 @@ export async function analyzeWalletLive(rawAddress: string): Promise<WalletPnlSu
   } else {
     notes.push(
       "This is this wallet's first lookup — it's now being indexed for permanent, full history on future scans. This result is from a live scan only.",
+    );
+  }
+  if (nativeLegsAdded > 0) {
+    notes.push(
+      `This wallet's native ETH activity (${nativeLegsAdded} transfer(s), including proceeds sent back directly from a swap router rather than as an ERC-20 token) is included and treated as a reference asset for pricing — this isn't visible to a plain token-transfer scan.`,
     );
   }
   if (confirmedSwaps.size > 0) {

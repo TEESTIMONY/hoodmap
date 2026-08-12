@@ -55,7 +55,12 @@ function isAbortError(err: unknown): boolean {
 
 export async function blockscoutGet<T>(
   path: string,
-  params: Record<string, string | number | boolean | undefined> = {},
+  // Accepts `null` alongside `undefined` — a page's own `next_page_params`
+  // (BlockscoutPage above) comes back with `null` values for absent
+  // fields, and this already treats both identically below (`v != null`
+  // skips either), so the type should say so rather than forcing every
+  // caller passing a page's own params back in to fight the type checker.
+  params: Record<string, string | number | boolean | null | undefined> = {},
 ): Promise<T> {
   const key = apiKey();
   if (!key) throw new BlockscoutError("BLOCKSCOUT_API_KEY is not configured");
