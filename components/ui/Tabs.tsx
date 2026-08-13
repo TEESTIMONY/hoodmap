@@ -25,7 +25,19 @@ export function Tabs({
   className?: string;
 }) {
   return (
-    <div className={cn("flex gap-1 overflow-x-auto border-b border-line", className)}>
+    <div
+      className={cn(
+        // self-start + w-fit: this bar sits in a flex-col parent, which
+        // stretches children to full width by default — without
+        // overriding that, the border-b below trails off into a long
+        // stretch of empty space past the last tab. Sizing to content
+        // (capped at max-w-full so overflow-x-auto still kicks in if the
+        // tabs themselves overflow a narrow viewport) makes the
+        // underline hug the actual tab labels instead.
+        "inline-flex w-fit max-w-full shrink-0 self-start gap-1 overflow-x-auto border-b border-line",
+        className,
+      )}
+    >
       {tabs.map((tab) => (
         <button
           key={tab.id}

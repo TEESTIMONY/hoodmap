@@ -38,6 +38,12 @@ const AMOUNT_COLOR: Record<Transfer["kind"], string> = {
 export function TransfersList({
   transfers,
   tokenPriceUsd,
+  // Set from the full-screen modal opened via the up-arrow next to the
+  // tabs: drops the max-h-[480px] cap (the modal's own scroll container
+  // handles that instead) and skips the GlassPanel wrapper, since the
+  // modal already renders one — nesting them would double up the
+  // border/background and the padding.
+  expanded = false,
 }: {
   transfers: Transfer[];
   // Only the token's CURRENT price, not what it was worth at each transfer's
@@ -45,24 +51,52 @@ export function TransfersList({
   // column is a "worth this much at today's price" figure, not a trade-time
   // valuation, which is why it's the same multiplier on every row.
   tokenPriceUsd?: number;
+  expanded?: boolean;
 }) {
-  return (
-    <GlassPanel className="overflow-hidden p-4">
-      <div className="mb-3 text-sm font-medium text-ink">Recent transfers</div>
+  const content = (
+    <>
       {transfers.length === 0 ? (
         <p className="text-xs text-ink-faint">No transfers observed in this scan window.</p>
       ) : (
-        <div className="max-h-[480px] overflow-y-auto overflow-x-auto">
+        <div
+          className={cn(
+            "overflow-x-auto",
+            // ~34px header + 6 rows at ~41px each (py-2.5 + text-sm + the
+            // row's own border-b) — capping here instead of at an arbitrary
+            // pixel count means exactly 6 rows show before the rest need a
+            // scroll, matching the header row's own height so it doesn't
+            // clip mid-row.
+            !expanded && "max-h-[280px] overflow-y-auto",
+          )}
+        >
           <table className="w-full min-w-[760px] border-collapse text-sm">
             <thead>
-              <tr className="sticky top-0 border-b border-line bg-canvas/90 text-left text-[11px] uppercase tracking-wide text-ink-faint backdrop-blur">
+              <tr className="sticky top-0 border-b border-line-strong bg-canvas/90 text-left text-[11px] uppercase tracking-wide text-ink-faint backdrop-blur">
+                {/* Vertical dividers here use box-shadow instead of the
+                    divide-x/border-left the body rows use — border-collapse
+                    drops collapsed cell borders on a sticky row in Chromium,
+                    so the same border-based divider silently disappeared
+                    only on this header. box-shadow paints independently of
+                    both border-collapse and sticky positioning. */}
                 <th className="px-2 py-2 font-medium">Age</th>
-                <th className="px-2 py-2 font-medium">Type</th>
-                <th className="px-2 py-2 text-right font-medium">Amount</th>
-                <th className="px-2 py-2 text-right font-medium">USD</th>
-                <th className="px-2 py-2 font-medium">From</th>
-                <th className="px-2 py-2 font-medium">To</th>
-                <th className="px-4 py-2 text-right font-medium">Txn</th>
+                <th className="px-2 py-2 text-right font-medium shadow-[inset_1px_0_0_var(--color-line-strong)]">
+                  Type
+                </th>
+                <th className="px-2 py-2 text-right font-medium shadow-[inset_1px_0_0_var(--color-line-strong)]">
+                  Amount
+                </th>
+                <th className="px-2 py-2 text-right font-medium shadow-[inset_1px_0_0_var(--color-line-strong)]">
+                  USD
+                </th>
+                <th className="px-2 py-2 text-right font-medium shadow-[inset_1px_0_0_var(--color-line-strong)]">
+                  From
+                </th>
+                <th className="px-2 py-2 text-right font-medium shadow-[inset_1px_0_0_var(--color-line-strong)]">
+                  To
+                </th>
+                <th className="px-4 py-2 text-right font-medium shadow-[inset_1px_0_0_var(--color-line-strong)]">
+                  Txn
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -72,10 +106,10 @@ export function TransfersList({
                 return (
                   <tr
                     key={`${t.hash}-${t.logIndex}`}
-                    className="border-b border-line/60 transition last:border-0 hover:bg-white/[0.02]"
+                    className="divide-x divide-line-strong border-b border-line-strong transition last:border-b-0 hover:bg-white/[0.02]"
                   >
                     <td className="px-2 py-2.5 whitespace-nowrap text-ink-faint">{formatAge(t.ageSeconds)}</td>
-                    <td className="px-2 py-2.5">
+                    <td className="px-2 py-2.5 text-right">
                       <span
                         className={cn(
                           "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
@@ -90,8 +124,12 @@ export function TransfersList({
                     <td className="px-2 py-2.5 text-right text-ink-muted">
                       {usd != null ? `$${shortNumber(usd)}` : "—"}
                     </td>
-                    <td className="px-2 py-2.5 font-mono text-xs text-ink-muted">{shortAddress(t.from)}</td>
-                    <td className="px-2 py-2.5 font-mono text-xs text-ink-muted">{shortAddress(t.to)}</td>
+                    <td className="px-2 py-2.5 text-right font-mono text-xs text-ink-muted">
+                      {shortAddress(t.from)}
+                    </td>
+                    <td className="px-2 py-2.5 text-right font-mono text-xs text-ink-muted">
+                      {shortAddress(t.to)}
+                    </td>
                     <td className="px-4 py-2.5 text-right">
                       <a
                         href={`${EXPLORER_TX_URL}${t.hash}`}
@@ -110,6 +148,10 @@ export function TransfersList({
           </table>
         </div>
       )}
-    </GlassPanel>
+    </>
   );
+
+  if (expanded) return content;
+
+  return <GlassPanel className="overflow-hidden p-4">{content}</GlassPanel>;
 }

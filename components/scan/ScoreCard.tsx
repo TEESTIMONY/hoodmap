@@ -3,11 +3,23 @@ import type { HoodScore } from "@/lib/scan/types";
 import { cn } from "@/lib/utils";
 
 const GRADE_STYLE: Record<HoodScore["grade"], string> = {
-  A: "text-success border-success/30 bg-success/10",
-  B: "text-moss-soft border-moss/30 bg-moss/10",
-  C: "text-warning border-warning/30 bg-warning/10",
-  D: "text-warning border-warning/30 bg-warning/10",
-  F: "text-danger border-danger/30 bg-danger/10",
+  A: "text-success",
+  B: "text-moss-soft",
+  C: "text-warning",
+  D: "text-warning",
+  F: "text-danger",
+};
+
+// The ring gauge below is drawn with a conic-gradient, which needs an
+// actual CSS color to sweep through — a Tailwind class like GRADE_STYLE's
+// can't be used inline for that, so this is the same four colors resolved
+// to their CSS custom properties instead.
+const GRADE_RING_COLOR: Record<HoodScore["grade"], string> = {
+  A: "var(--color-success)",
+  B: "var(--color-moss)",
+  C: "var(--color-warning)",
+  D: "var(--color-warning)",
+  F: "var(--color-danger)",
 };
 
 const SIGNAL_DOT: Record<"good" | "warn" | "bad", string> = {
@@ -26,14 +38,24 @@ export function ScoreCard({ score }: { score: HoodScore }) {
   return (
     <GlassPanel className="p-4">
       <div className="flex flex-col items-center gap-3 text-center">
+        {/* A ring gauge reads at a glance as "how full is this score" —
+            the flat bordered square it replaced showed the same two
+            numbers but with no visual sense of 100/100 vs. 40/100 short of
+            actually reading the text. The ring's sweep is the score itself
+            (conic-gradient from 0deg), so the fill directly represents the
+            fraction; the inner circle just masks the middle back down to a
+            ring, colored to match the surrounding GlassPanel exactly so it
+            doesn't read as a separate layered box. */}
         <div
-          className={cn(
-            "flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-[8px] border",
-            GRADE_STYLE[score.grade],
-          )}
+          className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full"
+          style={{
+            background: `conic-gradient(${GRADE_RING_COLOR[score.grade]} ${score.score * 3.6}deg, var(--color-line-strong) 0deg)`,
+          }}
         >
-          <div className="text-2xl font-bold leading-none">{score.grade}</div>
-          <div className="mt-1 text-xs opacity-80">{score.score}/100</div>
+          <div className="flex h-[78px] w-[78px] flex-col items-center justify-center rounded-full bg-[var(--color-surface)]">
+            <div className={cn("text-2xl font-bold leading-none", GRADE_STYLE[score.grade])}>{score.grade}</div>
+            <div className="mt-1 text-xs text-ink-muted">{score.score}/100</div>
+          </div>
         </div>
         <div className="min-w-0">
           <div className="text-sm font-semibold text-ink">{score.category}</div>

@@ -87,7 +87,7 @@ export default function WalletScanPage() {
         <AddressFromQuery onAddress={onAddressFromQuery} />
       </Suspense>
 
-      <div className={`mx-auto ${hasResult ? "max-w-6xl" : "max-w-3xl pt-[6vh]"}`}>
+      <div className={`mx-auto ${hasResult ? "max-w-[1400px]" : "max-w-3xl pt-[6vh]"}`}>
         {!hasResult && (
           <div className="mb-8 text-center animate-fade-up">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lime to-moss shadow-[var(--shadow-glow-lime)]">

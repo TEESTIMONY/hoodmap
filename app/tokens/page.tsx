@@ -5,7 +5,7 @@ import { TopTokens } from "@/components/scan/TopTokens";
 export default function TokensPage() {
   return (
     <div className="w-full px-4 py-6 md:px-6">
-      <div className="mx-auto max-w-[1400px]">
+      <div className="mx-auto max-w-[1800px]">
         <Link
           href="/scan"
           className="mb-4 inline-flex items-center gap-1.5 text-xs text-ink-faint transition hover:text-ink-muted"

@@ -154,9 +154,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         )}
 
-        {/* Main column */}
-        <div className="min-h-screen min-w-0 flex-1">
-          <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-line bg-canvas/70 px-4 py-3 backdrop-blur-xl md:px-6">
+        {/* Main column — locked to the viewport height (flex-col of a fixed
+            h-screen) instead of the old min-h-screen, which let this whole
+            column grow past the viewport and made the document itself
+            scroll. <main> is the one flexible piece (flex-1 min-h-0) and
+            owns its own scrollbar, so every page's content scrolls inside
+            this column rather than the page/body — same visible behavior
+            normally, but it's what lets a page like Scan opt out of that
+            scroll entirely and hand it to just one inner region instead. */}
+        <div className="flex h-screen min-w-0 flex-1 flex-col">
+          <header className="shrink-0 flex items-center justify-between gap-3 border-b border-line bg-canvas/70 px-4 py-3 backdrop-blur-xl md:px-6">
             <button
               onClick={() => setMobileNavOpen(true)}
               aria-label="Open menu"
@@ -180,7 +187,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <ConnectWallet />
           </header>
 
-          <main className="min-h-[calc(100vh-57px)]">{children}</main>
+          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
         </div>
       </div>
     </div>

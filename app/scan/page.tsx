@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ChevronDown, Search, ScanLine, TrendingUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, ScanLine, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { Modal } from "@/components/ui/Modal";
@@ -86,6 +86,12 @@ export default function ScanPage() {
   // scrolling back up just to see it, since the chart/sidebar above stayed
   // put. A modal keeps it reachable without that scroll.
   const [mapOpen, setMapOpen] = useState(false);
+  // Same popup pattern for the transactions table — the up-arrow next to
+  // the tabs opens the full list in a modal instead of scrolling the
+  // in-page table (which is capped at max-h-[480px] to keep the page from
+  // growing past the viewport; the modal is where you go to actually scan
+  // the whole list).
+  const [transactionsExpanded, setTransactionsExpanded] = useState(false);
   // Open by default so first-time visitors still see trending tokens for
   // discovery; collapses the moment a scan is run, since the results
   // themselves are the focus at that point — reopen anytime via the toggle.
@@ -126,13 +132,36 @@ export default function ScanPage() {
 
   const hasResult = state.kind === "ready";
 
+  // Below lg (and always for the idle/loading/error states, regardless of
+  // width) this page is normal document flow — AppShell's <main> scrolls
+  // it like any other page. Only at lg+ with a result does it opt into a
+  // locked-to-the-viewport layout with exactly one scrolling region (the
+  // sidebar): h-full here resolves against AppShell's <main>, which is now
+  // a definite, fixed-height flex box (see AppShell.tsx) rather than a
+  // guessed `calc(100vh-Npx)` — that guesswork is what kept leaving a
+  // sliver of page-level scroll behind on previous attempts.
+  const resultLayoutClass = hasResult ? "lg:flex lg:h-full lg:flex-col lg:overflow-hidden" : "";
+
   return (
-    <div className="w-full px-4 py-6 md:px-6">
+    <div className={`w-full px-4 pb-6 pt-3 md:px-6 ${resultLayoutClass}`}>
       <Suspense fallback={null}>
         <AddressFromQuery onAddress={onAddressFromQuery} />
       </Suspense>
 
-      <div className={`mx-auto ${hasResult ? "max-w-[1500px]" : "max-w-3xl pt-[6vh]"}`}>
+      <div
+        // No max-width cap once there's a result: the header above this
+        // (search bar, connect wallet) spans the full main column with no
+        // cap of its own, so a fixed max-w here — even a fairly wide one —
+        // reads as a shrunken column with matching gutters on both sides
+        // the moment the browser is wider than that cap. Letting it go
+        // edge-to-edge (mx-auto is a no-op without a max-width, kept only
+        // so the idle state below still centers) matches the header and
+        // uses the same width we already earned back from the sidebar/tab
+        // trims earlier in this conversation.
+        className={`mx-auto ${
+          hasResult ? `w-full ${resultLayoutClass} lg:min-h-0` : "max-w-3xl pt-[6vh]"
+        }`}
+      >
         {!hasResult && (
           <div className="mb-8 text-center animate-fade-up">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lime to-moss shadow-[var(--shadow-glow-lime)]">
@@ -215,37 +244,61 @@ export default function ScanPage() {
         )}
 
         {state.kind === "ready" && (
-          <div className="mt-6 flex flex-col gap-5">
+          <div className="mt-3 flex flex-col gap-5 lg:min-h-0 lg:flex-1">
             {/* Token identity now lives only in the sidebar (below) — this
                 page-level copy was dropped rather than kept as a second,
                 duplicate spot for the same name/avatar/address. */}
             <WarningsBanner warnings={state.data.warnings} />
 
             {/* DexScreener-style arrangement: chart + tabs + whichever tab's
-                content all stack together in one left column (3 of 4 grid
-                cols), so Transactions sits directly under the chart with no
-                gap, at the chart's own width — not full page width. The
-                sidebar (HoodScore, health, holders, clusters) is the other
-                column, and stacks to whatever height it needs on its own;
+                content all stack together in one left column, so
+                Transactions sits directly under the chart with no gap, at
+                the chart's own width — not full page width. The sidebar
+                (HoodScore, health, holders, clusters) is the other column,
+                and stacks to whatever height it needs on its own;
                 items-start keeps these two columns from stretching to match
                 each other (the default grid behavior), which previously
                 left a tall blank gap in the left column once the sidebar —
-                now 4 cards deep — grew past the chart's own height. */}
-            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-4">
-              <div className="flex flex-col gap-5 lg:col-span-3">
-                <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
+                now 4 cards deep — grew past the chart's own height.
+                The sidebar gets a fixed width rather than a fraction of the
+                grid — its cards (stats, score, health) don't need to grow
+                with the page, and a percentage split was wasting width on
+                them at this container's 1800px cap; the chart/tabs/table
+                column absorbs all the remaining space instead. */}
+            <div className="grid grid-cols-1 items-start gap-5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="flex flex-col gap-5">
+                {/* Tighter gap than the flex-col's own gap-5 specifically
+                    between the chart and the tab bar right below it — that
+                    pairing reads as one unit (chart, then the tabs that
+                    control what's under it), so the wider gap-5 rhythm used
+                    everywhere else here looked like wasted vertical space
+                    right above the tabs. */}
+                <div className="flex flex-col gap-1">
+                  <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
 
-                <Tabs
-                  tabs={scanTabs(state.data)}
-                  active={tab}
-                  onChange={(id) => {
-                    if (id === "map") {
-                      setMapOpen(true);
-                      return;
-                    }
-                    setTab(id as ScanTab);
-                  }}
-                />
+                  <div className="flex items-center justify-between">
+                    <Tabs
+                      tabs={scanTabs(state.data)}
+                      active={tab}
+                      onChange={(id) => {
+                        if (id === "map") {
+                          setMapOpen(true);
+                          return;
+                        }
+                        setTab(id as ScanTab);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setTransactionsExpanded(true)}
+                      aria-label="Expand full transaction list"
+                      title="Expand full transaction list"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-ink-faint transition hover:bg-white/[0.06] hover:text-ink"
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
 
                 <div className="animate-fade-up">
                   {tab === "whales" && <WhaleTable whales={state.data.whales} />}
@@ -260,7 +313,22 @@ export default function ScanPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-5 lg:col-span-1">
+              {/* h-full instead of a guessed calc(100vh-Npx): the grid
+                  above is now itself height-constrained (lg:min-h-0
+                  lg:flex-1, resolving against AppShell's fixed-height
+                  <main>), so with the default align-content: stretch this
+                  single grid row already fills exactly the available
+                  space — h-full on this column just claims that same
+                  height precisely, no pixel-offset arithmetic involved.
+                  min-h-0 is still required: a grid item's default
+                  min-height is auto (sized to its content), which silently
+                  overrides overflow-y-auto and lets it grow past its box
+                  anyway — that's what let the last card or two spill out
+                  and force the whole page to scroll instead of just this
+                  column. No sticky needed either: nothing above this
+                  column can scroll anymore, so there's nothing for it to
+                  stay put against. */}
+              <div className="flex min-h-0 flex-col gap-5 lg:h-full lg:overflow-y-auto lg:pr-1">
                 <TokenHeader token={state.data.token} />
                 <TokenStatsCard token={state.data.token} poolLabel={state.data.liquidity.pool} />
                 <ScoreCard score={state.data.hoodScore} />
@@ -279,31 +347,52 @@ export default function ScanPage() {
                 tokenSymbol={state.data.token.symbol}
               />
             </Modal>
+
+            <Modal
+              open={transactionsExpanded}
+              onClose={() => setTransactionsExpanded(false)}
+              title="Transactions"
+            >
+              <TransfersList
+                transfers={state.data.transfers}
+                tokenPriceUsd={state.data.token.priceUsd}
+                expanded
+              />
+            </Modal>
           </div>
         )}
       </div>
 
-      <div className="mx-auto mt-10 max-w-[1800px]">
-        <button
-          type="button"
-          onClick={() => setTopTokensOpen((v) => !v)}
-          aria-expanded={topTokensOpen}
-          className="glass-panel flex w-full items-center justify-between rounded-[10px] px-4 py-3 text-left transition hover:border-line-strong"
-        >
-          <span className="flex items-center gap-2 text-sm font-medium text-ink">
-            <TrendingUp className="h-4 w-4 text-lime-soft" />
-            Top memecoins on Robinhood Chain
-          </span>
-          <ChevronDown
-            className={`h-4 w-4 text-ink-faint transition-transform ${topTokensOpen ? "rotate-180" : ""}`}
-          />
-        </button>
-        {topTokensOpen && (
-          <div className="mt-3 animate-fade-up">
-            <TopTokens showHeader={false} viewAllHref="/tokens" />
-          </div>
-        )}
-      </div>
+      {/* Only rendered pre-scan now — this section's own margin + toggle
+          button used to add guaranteed extra height below the results grid
+          on every scan, which was what forced the whole page (not just the
+          sidebar) to scroll. It's a discovery aid for "haven't scanned
+          anything yet"; once there's a result, it's not needed and its
+          height was the one thing standing between "only the sidebar
+          scrolls" and reality. */}
+      {!hasResult && (
+        <div className="mx-auto mt-10 max-w-[1800px]">
+          <button
+            type="button"
+            onClick={() => setTopTokensOpen((v) => !v)}
+            aria-expanded={topTokensOpen}
+            className="glass-panel flex w-full items-center justify-between rounded-[10px] px-4 py-3 text-left transition hover:border-line-strong"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium text-ink">
+              <TrendingUp className="h-4 w-4 text-lime-soft" />
+              Top memecoins on Robinhood Chain
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 text-ink-faint transition-transform ${topTokensOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+          {topTokensOpen && (
+            <div className="mt-3 animate-fade-up">
+              <TopTokens showHeader={false} viewAllHref="/tokens" />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
