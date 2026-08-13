@@ -210,23 +210,21 @@ export default function ScanPage() {
 
             {/* DexScreener-style arrangement, in two rows sharing the same
                 4-col grid so the columns line up pixel-for-pixel:
-                  Row 1: chart (3 cols) beside the HoodScore card (1 col) —
-                    same grid row means the score card stretches to match
-                    the CHART's height, a "long card by its side" the way
-                    a trading terminal pairs a chart with an order panel.
+                  Row 1: chart (3 cols) beside a stacked sidebar (1 col) —
+                    HoodScore card, then the same health metrics as a
+                    second card directly under it — the way a trading
+                    terminal pairs a chart with an order panel and stacks
+                    a second card (margin usage) below that.
                   Row 2: tabs + whichever tab's content sit directly under
                     the chart, at the chart's own width — not full page
-                    width, and not sharing a row with the sidebar (that
-                    would stretch it to match this row's height too,
-                    which — since tab content can run to several thousand
-                    px — produced a technically-tall but mostly-empty card
-                    rather than the snug one beside the chart itself). */}
+                    width, and not sharing a row with the sidebar. */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
               <div className="lg:col-span-3">
                 <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
               </div>
-              <div className="lg:col-span-1">
+              <div className="flex flex-col gap-5 lg:col-span-1">
                 <ScoreCard score={state.data.hoodScore} />
+                <HealthGrid metrics={state.data.health} dense />
               </div>
             </div>
 

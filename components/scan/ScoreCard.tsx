@@ -24,7 +24,7 @@ const SIGNAL_DOT: Record<"good" | "warn" | "bad", string> = {
 // signal tiles into a 2-column grid with no room, in a column this narrow.
 export function ScoreCard({ score }: { score: HoodScore }) {
   return (
-    <GlassPanel className="h-full p-4">
+    <GlassPanel className="p-4">
       <div className="flex flex-col items-center gap-3 text-center">
         <div
           className={cn(
