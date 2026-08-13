@@ -24,7 +24,7 @@ const SIGNAL_DOT: Record<"good" | "warn" | "bad", string> = {
 // signal tiles into a 2-column grid with no room, in a column this narrow.
 export function ScoreCard({ score }: { score: HoodScore }) {
   return (
-    <GlassPanel className="p-4">
+    <GlassPanel className="h-full p-4">
       <div className="flex flex-col items-center gap-3 text-center">
         <div
           className={cn(
@@ -41,13 +41,18 @@ export function ScoreCard({ score }: { score: HoodScore }) {
         </div>
       </div>
 
-      <div className="mt-3 flex flex-col gap-1.5">
+      {/* Two per line instead of one — the same signals stacked one-per-row
+          ran the card on for six full rows of mostly-empty width. Grid
+          (not sm:grid-cols-2) because this column's own width, not the
+          viewport, is what decides whether two fit — and at ~280px it
+          reliably does. */}
+      <div className="mt-3 grid grid-cols-2 gap-1.5">
         {score.signals.map((signal, i) => (
-          <div key={i} className="flex items-start gap-2 rounded-[8px] bg-white/[0.03] px-2.5 py-1.5">
-            <span className={cn("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", SIGNAL_DOT[signal.kind])} />
+          <div key={i} className="flex items-start gap-1.5 rounded-[8px] bg-white/[0.03] px-2 py-1.5">
+            <span className={cn("mt-1 h-1.5 w-1.5 shrink-0 rounded-full", SIGNAL_DOT[signal.kind])} />
             <div className="min-w-0">
-              <div className="text-xs text-ink-muted">{signal.label}</div>
-              {signal.detail && <div className="text-[11px] text-ink-faint">{signal.detail}</div>}
+              <div className="text-[11px] leading-snug text-ink-muted">{signal.label}</div>
+              {signal.detail && <div className="text-[10px] leading-snug text-ink-faint">{signal.detail}</div>}
             </div>
           </div>
         ))}
