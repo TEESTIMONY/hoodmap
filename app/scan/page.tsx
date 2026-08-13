@@ -216,9 +216,9 @@ export default function ScanPage() {
 
         {state.kind === "ready" && (
           <div className="mt-6 flex flex-col gap-5">
-            {/* Always visible — context you need before you've even picked a
-                tab, not buried a click away. */}
-            <TokenHeader token={state.data.token} />
+            {/* Token identity now lives only in the sidebar (below) — this
+                page-level copy was dropped rather than kept as a second,
+                duplicate spot for the same name/avatar/address. */}
             <WarningsBanner warnings={state.data.warnings} />
 
             {/* DexScreener-style arrangement: chart + tabs + whichever tab's
@@ -261,7 +261,7 @@ export default function ScanPage() {
               </div>
 
               <div className="flex flex-col gap-5 lg:col-span-1">
-                <TokenHeader token={state.data.token} compact />
+                <TokenHeader token={state.data.token} />
                 <TokenStatsCard token={state.data.token} poolLabel={state.data.liquidity.pool} />
                 <ScoreCard score={state.data.hoodScore} />
                 <HealthGrid metrics={state.data.health} dense />
