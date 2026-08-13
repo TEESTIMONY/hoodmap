@@ -9,6 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { TokenHeader } from "@/components/scan/TokenHeader";
 import { TokenChart } from "@/components/scan/TokenChart";
+import { TokenStatsCard } from "@/components/scan/TokenStatsCard";
 import { ScoreCard } from "@/components/scan/ScoreCard";
 import { WarningsBanner } from "@/components/scan/WarningsBanner";
 import { HealthGrid } from "@/components/scan/HealthGrid";
@@ -260,6 +261,7 @@ export default function ScanPage() {
               </div>
 
               <div className="flex flex-col gap-5 lg:col-span-1">
+                <TokenStatsCard token={state.data.token} poolLabel={state.data.liquidity.pool} />
                 <ScoreCard score={state.data.hoodScore} />
                 <HealthGrid metrics={state.data.health} dense />
                 <HolderDistribution buckets={state.data.holderDistribution} />

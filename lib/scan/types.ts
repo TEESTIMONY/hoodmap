@@ -1,5 +1,7 @@
 // Shared Scan analysis types, ported from the original HoodMap analyzer.
 
+import type { DexSocialLink, DexTxnStats, DexWindowStats } from "./dexscreener";
+
 export type WalletRole =
   | "developer"
   | "liquidity"
@@ -85,7 +87,12 @@ export interface TokenMeta {
   decimals: number;
   totalSupply?: number;
   priceUsd?: number;
+  // Price in units of whatever the token's best-liquidity pair is quoted
+  // against (see quoteSymbol) — usually WETH, but not assumed to be.
+  priceNative?: number;
+  quoteSymbol?: string;
   marketCapUsd?: number;
+  fdvUsd?: number;
   liquidityUsd?: number;
   createdAgoSeconds?: number;
   source: "mock" | "dexscreener" | "robinhood-chain";
@@ -93,6 +100,15 @@ export interface TokenMeta {
   priceChange24h?: number;
   volume24hUsd?: number;
   txns24h?: { buys: number; sells: number };
+  // Multi-window versions of the three fields above (5m/1h/6h/24h) — for
+  // the sidebar's DexScreener-style stats card. priceChange24h/
+  // volume24hUsd/txns24h stay as their own fields too since existing
+  // callers (TokenHeader) already read them directly.
+  priceChangeWindows?: DexWindowStats;
+  volumeUsdWindows?: DexWindowStats;
+  txnsWindows?: DexTxnStats;
+  websiteUrl?: string;
+  socials?: DexSocialLink[];
   // Only present when DexScreener has enhanced token info for this
   // contract — absent for most memecoins. Consumers fall back to a
   // generated avatar when this is undefined.

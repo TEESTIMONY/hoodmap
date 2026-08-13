@@ -17,15 +17,28 @@ export interface DexTxnStats {
   h24?: { buys: number; sells: number };
 }
 
+export interface DexSocialLink {
+  type: string;
+  url: string;
+}
+
 export interface DexPairData {
   priceUsd?: number;
+  // Queried token's price in units of whatever it's paired against —
+  // labeled by quoteSymbol rather than assumed to be ETH, since the
+  // best-liquidity pair isn't always a WETH pair.
+  priceNative?: number;
+  quoteSymbol?: string;
   marketCapUsd?: number;
+  fdvUsd?: number;
   liquidityUsd?: number;
   createdAgoSeconds?: number;
   dexUrl?: string;
   poolLabel?: string;
   pairAddress?: string;
   imageUrl?: string;
+  websiteUrl?: string;
+  socials?: DexSocialLink[];
   priceChange: DexWindowStats;
   volumeUsd: DexWindowStats;
   txns: DexTxnStats;
@@ -40,6 +53,12 @@ interface RawPair {
   // resolution below).
   priceNative?: string;
   fdv?: number;
+  // Distinct from fdv — DexScreener's own pair payload carries both as
+  // separate numbers (fdv assumes fully diluted supply; marketCap can
+  // differ once burns/locks are accounted for). They happen to be equal
+  // for tokens with no such difference, which is easy to mistake for the
+  // same field — confirmed they're separate keys via a live API response.
+  marketCap?: number;
   liquidity?: { usd?: number };
   pairCreatedAt?: number;
   url?: string;
@@ -48,7 +67,11 @@ interface RawPair {
   // Only present when a project has submitted enhanced token info to
   // DexScreener — most memecoins on this chain haven't, so this is
   // frequently absent. Callers fall back to a generated avatar.
-  info?: { imageUrl?: string };
+  info?: {
+    imageUrl?: string;
+    websites?: { url?: string; label?: string }[];
+    socials?: { url?: string; type?: string }[];
+  };
   priceChange?: { m5?: number; h1?: number; h6?: number; h24?: number };
   volume?: { m5?: number; h1?: number; h6?: number; h24?: number };
   txns?: {
@@ -126,15 +149,35 @@ export async function fetchDexScreenerToken(address: string): Promise<DexPairDat
     return baseUsd / priceNative;
   })();
 
+  // Same base/quote-side logic as priceUsd above, but for "queried token's
+  // price in the OTHER side of the pair" rather than in USD — 1 base is
+  // worth priceNative quote-tokens, so if the queried token is the base,
+  // priceNative already IS its price in quote-token units; if it's the
+  // quote side, invert.
+  const resolvedPriceNative = (() => {
+    const nativeAsBase = top?.priceNative ? Number(top.priceNative) : undefined;
+    if (!nativeAsBase) return undefined;
+    if (!isQueriedTokenTheQuoteSide) return nativeAsBase;
+    return nativeAsBase > 0 ? 1 / nativeAsBase : undefined;
+  })();
+  const quoteSymbol = isQueriedTokenTheQuoteSide ? base?.symbol : quote?.symbol;
+
   return {
     priceUsd: resolvedPriceUsd,
-    marketCapUsd: top?.fdv ? Number(top.fdv) : undefined,
+    priceNative: resolvedPriceNative,
+    quoteSymbol,
+    marketCapUsd: top?.marketCap ? Number(top.marketCap) : undefined,
+    fdvUsd: top?.fdv ? Number(top.fdv) : undefined,
     liquidityUsd: top?.liquidity?.usd ? Number(top.liquidity.usd) : undefined,
     createdAgoSeconds: createdMs ? Math.floor((Date.now() - createdMs) / 1000) : undefined,
     dexUrl: top?.url,
     poolLabel: `${base?.symbol ?? "?"}/${quote?.symbol ?? "?"} on ${top?.dexId ?? "DEX"}`,
     pairAddress: top?.pairAddress,
     imageUrl: top?.info?.imageUrl,
+    websiteUrl: top?.info?.websites?.find((w) => w?.url)?.url,
+    socials: (top?.info?.socials ?? [])
+      .filter((s): s is { url: string; type: string } => !!s?.url && !!s?.type)
+      .map((s) => ({ type: s.type, url: s.url })),
     priceChange: {
       m5: top?.priceChange?.m5,
       h1: top?.priceChange?.h1,
