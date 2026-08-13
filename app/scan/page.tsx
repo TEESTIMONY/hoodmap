@@ -220,30 +220,20 @@ export default function ScanPage() {
             <TokenHeader token={state.data.token} />
             <WarningsBanner warnings={state.data.warnings} />
 
-            {/* DexScreener-style arrangement, in two rows sharing the same
-                4-col grid so the columns line up pixel-for-pixel:
-                  Row 1: chart (3 cols) beside a stacked sidebar (1 col) —
-                    HoodScore card, then the same health metrics as a
-                    second card directly under it — the way a trading
-                    terminal pairs a chart with an order panel and stacks
-                    a second card (margin usage) below that.
-                  Row 2: tabs + whichever tab's content sit directly under
-                    the chart, at the chart's own width — not full page
-                    width, and not sharing a row with the sidebar. */}
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
-              <div className="lg:col-span-3">
-                <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
-              </div>
-              <div className="flex flex-col gap-5 lg:col-span-1">
-                <ScoreCard score={state.data.hoodScore} />
-                <HealthGrid metrics={state.data.health} dense />
-                <HolderDistribution buckets={state.data.holderDistribution} />
-                <ClusterCards groups={state.data.groups} />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
+            {/* DexScreener-style arrangement: chart + tabs + whichever tab's
+                content all stack together in one left column (3 of 4 grid
+                cols), so Transactions sits directly under the chart with no
+                gap, at the chart's own width — not full page width. The
+                sidebar (HoodScore, health, holders, clusters) is the other
+                column, and stacks to whatever height it needs on its own;
+                items-start keeps these two columns from stretching to match
+                each other (the default grid behavior), which previously
+                left a tall blank gap in the left column once the sidebar —
+                now 4 cards deep — grew past the chart's own height. */}
+            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-4">
               <div className="flex flex-col gap-5 lg:col-span-3">
+                <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
+
                 <Tabs
                   tabs={scanTabs(state.data)}
                   active={tab}
@@ -267,6 +257,13 @@ export default function ScanPage() {
                     <SummaryFooter aiSummary={state.data.aiSummary} dataSources={state.data.dataSources} />
                   )}
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-5 lg:col-span-1">
+                <ScoreCard score={state.data.hoodScore} />
+                <HealthGrid metrics={state.data.health} dense />
+                <HolderDistribution buckets={state.data.holderDistribution} />
+                <ClusterCards groups={state.data.groups} />
               </div>
             </div>
 
