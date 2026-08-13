@@ -721,15 +721,15 @@ function smartWarnings(x: {
       severity: "warn",
       message: `Elevated concentration: top 10 wallets hold ${x.top10Pct.toFixed(1)}%.`,
     });
+  // A low ("info" severity) cluster count/pct used to always surface a
+  // banner here too — pure noise for the common case (a handful of
+  // clusters holding ~0% of supply isn't a warning), and fully redundant
+  // with the sidebar's own Wallet clusters card now. Only the genuinely
+  // risky threshold below still warrants interrupting with a banner.
   if (x.clusterPct > 15)
     out.push({
       severity: "high",
       message: `${x.clusterCount} connected wallet cluster(s) hold ${x.clusterPct.toFixed(1)}% of supply.`,
-    });
-  else if (x.clusterCount > 0)
-    out.push({
-      severity: "info",
-      message: `${x.clusterCount} connected wallet cluster(s) detected (${x.clusterPct.toFixed(1)}%).`,
     });
   if (x.developerPct > 10)
     out.push({
