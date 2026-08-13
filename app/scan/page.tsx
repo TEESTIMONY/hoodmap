@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { ChevronDown, Search, ScanLine, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { Modal } from "@/components/ui/Modal";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { TokenHeader } from "@/components/scan/TokenHeader";
 import { TokenChart } from "@/components/scan/TokenChart";
@@ -37,12 +38,17 @@ const STEPS: { key: ProgressStep; label: string }[] = [
   { key: "rendering", label: "Compute intelligence" },
 ];
 
+// "Overview" was dropped as a tab — HealthGrid/HolderDistribution/
+// ClusterCards now live permanently in the sidebar next to the chart (see
+// below), so a tab that just re-showed the same three cards full-width
+// would've been pure duplication. "HoodMap" stays in this list (it still
+// needs to render as a tab-styled button) but clicking it opens a modal
+// instead of switching `tab` — see the onChange handler below.
 function scanTabs(data: AnalysisResult): TabItem[] {
   return [
-    { id: "overview", label: "Overview" },
+    { id: "transactions", label: "Transactions", count: data.transfers.length },
     { id: "map", label: "HoodMap", count: data.graph.nodes.length },
     { id: "whales", label: "Whales", count: data.whales.length },
-    { id: "transactions", label: "Transactions", count: data.transfers.length },
     { id: "summary", label: "Summary" },
   ];
 }
@@ -62,7 +68,7 @@ function AddressFromQuery({ onAddress }: { onAddress: (address: string) => void 
   return null;
 }
 
-type ScanTab = "overview" | "map" | "whales" | "transactions" | "summary";
+type ScanTab = "whales" | "transactions" | "summary";
 
 export default function ScanPage() {
   const [address, setAddress] = useState("");
@@ -73,7 +79,12 @@ export default function ScanPage() {
     | { kind: "error"; message: string }
     | { kind: "ready"; data: AnalysisResult }
   >({ kind: "idle" });
-  const [tab, setTab] = useState<ScanTab>("overview");
+  const [tab, setTab] = useState<ScanTab>("transactions");
+  // HoodMap opens as a popup instead of an in-place tab switch — its graph
+  // is tall enough that switching to it in the normal tab area meant
+  // scrolling back up just to see it, since the chart/sidebar above stayed
+  // put. A modal keeps it reachable without that scroll.
+  const [mapOpen, setMapOpen] = useState(false);
   // Open by default so first-time visitors still see trending tokens for
   // discovery; collapses the moment a scan is run, since the results
   // themselves are the focus at that point — reopen anytime via the toggle.
@@ -83,7 +94,8 @@ export default function ScanPage() {
   async function runAnalysis(raw: string) {
     if (!raw.trim()) return;
     setState({ kind: "loading" });
-    setTab("overview");
+    setTab("transactions");
+    setMapOpen(false);
     setTopTokensOpen(false);
     setProgress("validating");
     try {
@@ -225,37 +237,31 @@ export default function ScanPage() {
               <div className="flex flex-col gap-5 lg:col-span-1">
                 <ScoreCard score={state.data.hoodScore} />
                 <HealthGrid metrics={state.data.health} dense />
+                <HolderDistribution buckets={state.data.holderDistribution} />
+                <ClusterCards groups={state.data.groups} />
               </div>
             </div>
 
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-4">
               <div className="flex flex-col gap-5 lg:col-span-3">
-                <Tabs tabs={scanTabs(state.data)} active={tab} onChange={(id) => setTab(id as ScanTab)} />
+                <Tabs
+                  tabs={scanTabs(state.data)}
+                  active={tab}
+                  onChange={(id) => {
+                    if (id === "map") {
+                      setMapOpen(true);
+                      return;
+                    }
+                    setTab(id as ScanTab);
+                  }}
+                />
 
                 <div className="animate-fade-up">
-                  {tab === "overview" && (
-                    <div className="flex flex-col gap-5">
-                      <HealthGrid metrics={state.data.health} />
-                      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-                        <HolderDistribution buckets={state.data.holderDistribution} />
-                        <ClusterCards groups={state.data.groups} />
-                      </div>
-                    </div>
-                  )}
-
-                  {tab === "map" && (
-                    <HoodMapView
-                      nodes={state.data.graph.nodes}
-                      groups={state.data.groups}
-                      allTransfers={state.data.allTransfers}
-                      tokenPriceUsd={state.data.token.priceUsd}
-                      tokenSymbol={state.data.token.symbol}
-                    />
-                  )}
-
                   {tab === "whales" && <WhaleTable whales={state.data.whales} />}
 
-                  {tab === "transactions" && <TransfersList transfers={state.data.transfers} />}
+                  {tab === "transactions" && (
+                    <TransfersList transfers={state.data.transfers} tokenPriceUsd={state.data.token.priceUsd} />
+                  )}
 
                   {tab === "summary" && (
                     <SummaryFooter aiSummary={state.data.aiSummary} dataSources={state.data.dataSources} />
@@ -263,6 +269,16 @@ export default function ScanPage() {
                 </div>
               </div>
             </div>
+
+            <Modal open={mapOpen} onClose={() => setMapOpen(false)} title="HoodMap">
+              <HoodMapView
+                nodes={state.data.graph.nodes}
+                groups={state.data.groups}
+                allTransfers={state.data.allTransfers}
+                tokenPriceUsd={state.data.token.priceUsd}
+                tokenSymbol={state.data.token.symbol}
+              />
+            </Modal>
           </div>
         )}
       </div>
