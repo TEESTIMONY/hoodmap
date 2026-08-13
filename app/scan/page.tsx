@@ -261,6 +261,7 @@ export default function ScanPage() {
               </div>
 
               <div className="flex flex-col gap-5 lg:col-span-1">
+                <TokenHeader token={state.data.token} compact />
                 <TokenStatsCard token={state.data.token} poolLabel={state.data.liquidity.pool} />
                 <ScoreCard score={state.data.hoodScore} />
                 <HealthGrid metrics={state.data.health} dense />
