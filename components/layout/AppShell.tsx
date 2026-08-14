@@ -12,9 +12,9 @@ const NAV_ITEMS = [
   { href: "/scan", label: "Scan", icon: ScanLine },
   { href: "/tokens", label: "Top Memecoins", icon: TrendingUp },
   { href: "/wallet", label: "Wallet Passport", icon: Wallet },
-  { href: "/constellation", label: "Constellation", icon: Sparkles },
+  { href: "/constellation", label: "Constellation", icon: Sparkles, soon: true },
   { href: "/notifications", label: "Notifications", icon: Bell, soon: true },
-  { href: "/profile/me", label: "Profile", icon: User },
+  { href: "/profile/me", label: "Profile", icon: User, soon: true },
 ];
 
 function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {

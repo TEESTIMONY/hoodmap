@@ -1,23 +1,12 @@
-import { notFound } from "next/navigation";
-import { ProfileHeader } from "@/components/profile/ProfileHeader";
-import { ProfileTabs } from "@/components/profile/ProfileTabs";
-import { findPerson, posts } from "@/lib/mock-data";
+import { User } from "lucide-react";
+import { ComingSoon } from "@/components/layout/ComingSoon";
 
-export default async function ProfilePage({
-  params,
-}: {
-  params: Promise<{ handle: string }>;
-}) {
-  const { handle } = await params;
-  const person = findPerson(decodeURIComponent(handle));
-  if (!person) notFound();
-
-  const personPosts = posts.filter((p) => p.authorId === person.id);
-
+export default function ProfilePage() {
   return (
-    <div className="mx-auto max-w-2xl px-4 py-6 md:px-6">
-      <ProfileHeader person={person} />
-      <ProfileTabs person={person} posts={personPosts} />
-    </div>
+    <ComingSoon
+      icon={User}
+      title="Profiles are next"
+      description="A verified identity for your wallet — trade history, HoodScore, reputation tier, and badges, all in one shareable place."
+    />
   );
 }
