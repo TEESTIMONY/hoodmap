@@ -2,10 +2,12 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, Wallet as WalletIcon } from "lucide-react";
+import { ChevronUp, Search, Wallet as WalletIcon } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { WalletStatsHeader } from "@/components/wallet/WalletStatsHeader";
+import { Modal } from "@/components/ui/Modal";
+import { Tabs, type TabItem } from "@/components/ui/Tabs";
+import { WalletIdentityCard, WalletStatsCard } from "@/components/wallet/WalletStatsHeader";
 import { WalletHighlights } from "@/components/wallet/WalletHighlights";
 import { OpenPositionsTable } from "@/components/wallet/OpenPositionsTable";
 import { ClosedTradesTable } from "@/components/wallet/ClosedTradesTable";
@@ -32,6 +34,22 @@ function AddressFromQuery({ onAddress }: { onAddress: (address: string) => void 
   return null;
 }
 
+type WalletTab = "positions" | "closed" | "transfers";
+
+function walletTabs(data: WalletPnlSummary): TabItem[] {
+  return [
+    { id: "positions", label: "Open positions", count: data.openPositions.length },
+    { id: "closed", label: "Closed trades", count: data.closedTrades.length },
+    { id: "transfers", label: "Transfers", count: data.transfers.length },
+  ];
+}
+
+const TAB_TITLE: Record<WalletTab, string> = {
+  positions: "Open positions",
+  closed: "Closed trades",
+  transfers: "Transfers",
+};
+
 export default function WalletScanPage() {
   const [address, setAddress] = useState("");
   const [state, setState] = useState<
@@ -40,8 +58,13 @@ export default function WalletScanPage() {
     | { kind: "error"; message: string }
     | { kind: "ready"; data: WalletPnlSummary }
   >({ kind: "idle" });
+  const [tab, setTab] = useState<WalletTab>("positions");
+  // Same pattern as the token scan page's transactions expand button — the
+  // up-arrow next to the tabs opens whichever tab is currently active in a
+  // full-screen modal, instead of scrolling the in-page table (which is
+  // capped at max-h-[280px] to keep the tables compact by default).
+  const [tableExpanded, setTableExpanded] = useState(false);
   const ranFromQuery = useRef(false);
-  const [transfersExpanded, setTransfersExpanded] = useState(false);
 
   async function runAnalysis(raw: string) {
     const trimmed = raw.trim();
@@ -55,7 +78,8 @@ export default function WalletScanPage() {
       return;
     }
     setState({ kind: "loading" });
-    setTransfersExpanded(false);
+    setTab("positions");
+    setTableExpanded(false);
     try {
       const data = await analyzeWalletServer(trimmed);
       setState({ kind: "ready", data });
@@ -82,12 +106,16 @@ export default function WalletScanPage() {
   const hasResult = state.kind === "ready";
 
   return (
-    <div className="w-full px-4 py-6 md:px-6">
+    <div className="w-full px-4 pb-6 pt-3 md:px-6">
       <Suspense fallback={null}>
         <AddressFromQuery onAddress={onAddressFromQuery} />
       </Suspense>
 
-      <div className={`mx-auto ${hasResult ? "max-w-[1400px]" : "max-w-3xl pt-[6vh]"}`}>
+      {/* No max-width cap once there's a result — see the matching comment
+          on the token scan page for why: a fixed cap here would float this
+          column with matching gutters on both sides the moment the browser
+          is wider than it, while the header above has no cap at all. */}
+      <div className={`mx-auto ${hasResult ? "w-full" : "max-w-3xl pt-[6vh]"}`}>
         {!hasResult && (
           <div className="mb-8 text-center animate-fade-up">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lime to-moss shadow-[var(--shadow-glow-lime)]">
@@ -146,16 +174,40 @@ export default function WalletScanPage() {
         )}
 
         {state.kind === "ready" && (
-          <div className="mt-6 flex flex-col gap-5">
-            <WalletStatsHeader
-              summary={state.data}
-              transfersExpanded={transfersExpanded}
-              onToggleTransfers={() => setTransfersExpanded((v) => !v)}
-            />
-            {transfersExpanded && <WalletTransfersTable transfers={state.data.transfers} />}
-            <WalletHighlights largestWin={state.data.largestWin} largestLoss={state.data.largestLoss} />
-            <OpenPositionsTable positions={state.data.openPositions} />
-            <ClosedTradesTable trades={state.data.closedTrades} />
+          <div className="mt-3 flex flex-col gap-5">
+            {/* Same DexScreener-style split as the token scan page: tabs +
+                whichever tab's table on the left (absorbing all the width),
+                identity/stats/highlights stacked in a fixed-width sidebar on
+                the right. items-start keeps the sidebar from stretching to
+                match the (usually taller) table column. */}
+            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="flex flex-col gap-5">
+                <div className="flex items-center justify-between">
+                  <Tabs tabs={walletTabs(state.data)} active={tab} onChange={(id) => setTab(id as WalletTab)} />
+                  <button
+                    type="button"
+                    onClick={() => setTableExpanded(true)}
+                    aria-label="Expand full table"
+                    title="Expand full table"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] text-ink-faint transition hover:bg-white/[0.06] hover:text-ink"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="animate-fade-up">
+                  {tab === "positions" && <OpenPositionsTable positions={state.data.openPositions} />}
+                  {tab === "closed" && <ClosedTradesTable trades={state.data.closedTrades} />}
+                  {tab === "transfers" && <WalletTransfersTable transfers={state.data.transfers} />}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-5">
+                <WalletIdentityCard summary={state.data} />
+                <WalletHighlights largestWin={state.data.largestWin} largestLoss={state.data.largestLoss} />
+                <WalletStatsCard summary={state.data} />
+              </div>
+            </div>
 
             <GlassPanel className="p-4">
               <div className="mb-2 text-sm font-medium text-ink">About these numbers</div>
@@ -171,6 +223,12 @@ export default function WalletScanPage() {
                 </p>
               </div>
             </GlassPanel>
+
+            <Modal open={tableExpanded} onClose={() => setTableExpanded(false)} title={TAB_TITLE[tab]}>
+              {tab === "positions" && <OpenPositionsTable positions={state.data.openPositions} expanded />}
+              {tab === "closed" && <ClosedTradesTable trades={state.data.closedTrades} expanded />}
+              {tab === "transfers" && <WalletTransfersTable transfers={state.data.transfers} expanded />}
+            </Modal>
           </div>
         )}
       </div>

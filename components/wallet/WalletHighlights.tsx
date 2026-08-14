@@ -47,6 +47,10 @@ function TradeHighlight({
   );
 }
 
+// Always a single column now (not sm:grid-cols-2) — this lives in the
+// scan sidebar's narrow, fixed-width column, same as ScoreCard, so it's
+// the column's own width that decides whether two fit side by side, not
+// the viewport's. At ~320px they don't.
 export function WalletHighlights({
   largestWin,
   largestLoss,
@@ -55,7 +59,7 @@ export function WalletHighlights({
   largestLoss?: ClosedTrade;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+    <div className="flex flex-col gap-2.5">
       <TradeHighlight label="Largest win" trade={largestWin} positive />
       <TradeHighlight label="Largest loss" trade={largestLoss} positive={false} />
     </div>

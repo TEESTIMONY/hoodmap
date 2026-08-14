@@ -22,7 +22,11 @@ import { cn, hashString } from "@/lib/utils";
 import { WalletDetailPanel } from "@/components/scan/WalletDetailPanel";
 import { BubbleLoader } from "@/components/scan/BubbleLoader";
 
-const CANVAS_HEIGHT = 440;
+// Modal itself caps at max-h-[90vh] and just sizes to whatever height its
+// content actually uses — this fixed canvas height (not the modal) is what
+// was making the popup feel short, since the rest of its content (legend,
+// description, padding) is comparatively small.
+const CANVAS_HEIGHT = 620;
 const MAX_HOLDERS = 100;
 const ALPHA_DECAY = 0.985;
 const ALPHA_MIN = 0.01;
