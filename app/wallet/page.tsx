@@ -182,6 +182,19 @@ export default function WalletScanPage() {
                 match the (usually taller) table column. */}
             <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
               <div className="flex flex-col gap-5">
+                {/* Mobile-only copy of the whole sidebar block, shown above
+                    the table — below lg the sidebar column (further down)
+                    stacks under the table column, putting identity,
+                    highlights, and stats out of sight below the whole
+                    table unless you scroll past it first. The sidebar's
+                    own copy is hidden below lg so only one is ever visible
+                    at a time. */}
+                <div className="flex flex-col gap-5 lg:hidden">
+                  <WalletIdentityCard summary={state.data} />
+                  <WalletHighlights largestWin={state.data.largestWin} largestLoss={state.data.largestLoss} />
+                  <WalletStatsCard summary={state.data} />
+                </div>
+
                 <div className="flex items-center justify-between">
                   <Tabs tabs={walletTabs(state.data)} active={tab} onChange={(id) => setTab(id as WalletTab)} />
                   <button
@@ -202,7 +215,7 @@ export default function WalletScanPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-5">
+              <div className="hidden flex-col gap-5 lg:flex">
                 <WalletIdentityCard summary={state.data} />
                 <WalletHighlights largestWin={state.data.largestWin} largestLoss={state.data.largestLoss} />
                 <WalletStatsCard summary={state.data} />

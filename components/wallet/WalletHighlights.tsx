@@ -47,10 +47,13 @@ function TradeHighlight({
   );
 }
 
-// Always a single column now (not sm:grid-cols-2) — this lives in the
-// scan sidebar's narrow, fixed-width column, same as ScoreCard, so it's
-// the column's own width that decides whether two fit side by side, not
-// the viewport's. At ~320px they don't.
+// Two columns below lg, one column at lg+ — the reverse of the usual
+// responsive direction, because the reason is reversed too: below lg, the
+// wallet page's sidebar grid column stacks to the page's full width (the
+// column, not the viewport, is what ScoreCard's comment is about — full
+// page width is plenty for two cards side by side even on a phone). At
+// lg+ this becomes the ~320px fixed sidebar column next to the table,
+// where two cards genuinely don't fit.
 export function WalletHighlights({
   largestWin,
   largestLoss,
@@ -59,7 +62,7 @@ export function WalletHighlights({
   largestLoss?: ClosedTrade;
 }) {
   return (
-    <div className="flex flex-col gap-2.5">
+    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-1">
       <TradeHighlight label="Largest win" trade={largestWin} positive />
       <TradeHighlight label="Largest loss" trade={largestLoss} positive={false} />
     </div>
