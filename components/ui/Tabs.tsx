@@ -8,6 +8,9 @@ export interface TabItem {
   label: string;
   count?: number;
   icon?: ReactNode;
+  // Per-tab escape hatch for a button that shouldn't always show — e.g.
+  // the scan page's mobile-only "Chart" tab (className: "lg:hidden").
+  buttonClassName?: string;
 }
 
 // Shared tab-bar visual language (underline gradient bar) — matches
@@ -46,6 +49,7 @@ export function Tabs({
           className={cn(
             "relative flex shrink-0 items-center gap-1.5 whitespace-nowrap px-4 py-3 text-sm transition",
             active === tab.id ? "text-ink" : "text-ink-faint hover:text-ink-muted",
+            tab.buttonClassName,
           )}
         >
           {tab.icon}

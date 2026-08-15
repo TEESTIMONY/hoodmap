@@ -45,8 +45,14 @@ const STEPS: { key: ProgressStep; label: string }[] = [
 // would've been pure duplication. "HoodMap" stays in this list (it still
 // needs to render as a tab-styled button) but clicking it opens a modal
 // instead of switching `tab` — see the onChange handler below.
+// "Chart" only exists as a tab below lg (buttonClassName: "lg:hidden") —
+// at lg+ the chart is always visible above these tabs instead (see the
+// JSX below), so a second way to reach the same chart would be redundant
+// there. Below lg there's no room to keep it always-visible without
+// pushing everything else down, so it collapses into a tab like the rest.
 function scanTabs(data: AnalysisResult): TabItem[] {
   return [
+    { id: "chart", label: "Chart", buttonClassName: "lg:hidden" },
     { id: "transactions", label: "Transactions", count: data.transfers.length },
     { id: "map", label: "HoodMap", count: data.graph.nodes.length },
     { id: "whales", label: "Whales", count: data.whales.length },
@@ -69,7 +75,7 @@ function AddressFromQuery({ onAddress }: { onAddress: (address: string) => void 
   return null;
 }
 
-type ScanTab = "whales" | "transactions" | "summary";
+type ScanTab = "chart" | "whales" | "transactions" | "summary";
 
 export default function ScanPage() {
   const [address, setAddress] = useState("");
@@ -267,14 +273,35 @@ export default function ScanPage() {
                 column absorbs all the remaining space instead. */}
             <div className="grid grid-cols-1 items-start gap-5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px]">
               <div className="flex flex-col gap-5">
+                {/* Mobile-only copy of the sidebar, shown above the chart
+                    tabs — below lg the sidebar column (further down) stacks
+                    under this whole column, putting token identity, score,
+                    and health out of sight below the chart/tabs/table
+                    unless you scroll past all of it first. The sidebar's
+                    own copy is hidden below lg so only one is ever visible
+                    at a time — same pattern as the Wallet Passport page. */}
+                <div className="flex flex-col gap-5 lg:hidden">
+                  <TokenHeader token={state.data.token} />
+                  <TokenStatsCard token={state.data.token} poolLabel={state.data.liquidity.pool} />
+                  <ScoreCard score={state.data.hoodScore} />
+                  <HealthGrid metrics={state.data.health} dense />
+                  <HolderDistribution buckets={state.data.holderDistribution} />
+                  <ClusterCards groups={state.data.groups} />
+                </div>
+
                 {/* Tighter gap than the flex-col's own gap-5 specifically
                     between the chart and the tab bar right below it — that
                     pairing reads as one unit (chart, then the tabs that
                     control what's under it), so the wider gap-5 rhythm used
                     everywhere else here looked like wasted vertical space
-                    right above the tabs. */}
+                    right above the tabs. Chart itself is lg+ only here —
+                    below lg it collapses into the "Chart" tab instead (see
+                    scanTabs), so it doesn't push the sidebar-above-the-fold
+                    content further down the page on a small screen. */}
                 <div className="flex flex-col gap-1">
-                  <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
+                  <div className="hidden lg:block">
+                    <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
+                  </div>
 
                   <div className="flex items-center justify-between">
                     <Tabs
@@ -301,6 +328,10 @@ export default function ScanPage() {
                 </div>
 
                 <div className="animate-fade-up">
+                  {tab === "chart" && (
+                    <TokenChart dexUrl={state.data.token.dexUrl} symbol={state.data.token.symbol} />
+                  )}
+
                   {tab === "whales" && <WhaleTable whales={state.data.whales} />}
 
                   {tab === "transactions" && (
@@ -328,7 +359,7 @@ export default function ScanPage() {
                   column. No sticky needed either: nothing above this
                   column can scroll anymore, so there's nothing for it to
                   stay put against. */}
-              <div className="flex min-h-0 flex-col gap-5 lg:h-full lg:overflow-y-auto lg:pr-1">
+              <div className="hidden min-h-0 flex-col gap-5 lg:flex lg:h-full lg:overflow-y-auto lg:pr-1">
                 <TokenHeader token={state.data.token} />
                 <TokenStatsCard token={state.data.token} poolLabel={state.data.liquidity.pool} />
                 <ScoreCard score={state.data.hoodScore} />
